@@ -35,7 +35,7 @@ contract DeployAll is Script {
     uint256 constant MAX_PERFORMANCE_FEE = 1000; // 10% max in basis points
 
     function run() external {
-        uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
+        uint256 deployerPrivateKey = uint256(vm.envBytes32("PRIVATE_KEY"));
         address deployer = vm.addr(deployerPrivateKey);
 
         console.log("=== YIELD VAULT DEPLOYMENT ===");

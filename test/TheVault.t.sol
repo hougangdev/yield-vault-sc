@@ -303,4 +303,395 @@ contract TheVaultTest is Test {
         theVault.redeem(depositAmount, user1, user1);
         vm.stopPrank();
     }
+
+    // Additional tests to improve coverage
+    function testSetPerformanceFee() public {
+        uint256 newFee = 500; // 5%
+
+        vm.startPrank(owner);
+        vm.expectEmit(true, true, true, true);
+        emit TheVault.PerformanceFeeUpdated(theVault.performanceFee(), newFee);
+        theVault.setPerformanceFee(newFee);
+        vm.stopPrank();
+
+        assertEq(theVault.performanceFee(), newFee);
+    }
+
+    function testSetPerformanceFeeExceedsMax() public {
+        uint256 maxFee = 1001; // Exceeds 10% max
+
+        vm.startPrank(owner);
+        vm.expectRevert(TheVault.TheVault__InvalidAmount.selector);
+        theVault.setPerformanceFee(maxFee);
+        vm.stopPrank();
+    }
+
+    function testSetPerformanceFeeOnlyOwner() public {
+        vm.startPrank(user1);
+        vm.expectRevert();
+        theVault.setPerformanceFee(500);
+        vm.stopPrank();
+    }
+
+    function testSetFeeRecipient() public {
+        address newRecipient = address(0x456);
+
+        vm.startPrank(owner);
+        vm.expectEmit(true, true, true, true);
+        emit TheVault.FeeRecipientUpdated(theVault.feeRecipient(), newRecipient);
+        theVault.setFeeRecipient(newRecipient);
+        vm.stopPrank();
+
+        assertEq(theVault.feeRecipient(), newRecipient);
+    }
+
+    function testSetFeeRecipientZeroAddress() public {
+        vm.startPrank(owner);
+        vm.expectRevert(TheVault.TheVault__InvalidAddress.selector);
+        theVault.setFeeRecipient(address(0));
+        vm.stopPrank();
+    }
+
+    function testSetFeeRecipientOnlyOwner() public {
+        vm.startPrank(user1);
+        vm.expectRevert();
+        theVault.setFeeRecipient(address(0x456));
+        vm.stopPrank();
+    }
+
+    function testCompoundMultipleRewards() public {
+        address[] memory users = new address[](2);
+        users[0] = user1;
+        users[1] = user2;
+
+        vm.startPrank(owner);
+        // Should not revert even with no rewards
+        theVault.compoundMultipleRewards(users);
+        vm.stopPrank();
+
+        assertTrue(true); // Test passes if no revert
+    }
+
+    function testGetStakingTokenBalance() public view {
+        uint256 balance = theVault.getStakingTokenBalance();
+        assertEq(balance, 0); // Initially 0
+    }
+
+    function testTotalAssets() public view {
+        uint256 totalAssets = theVault.totalAssets();
+        assertEq(totalAssets, 0); // Initially 0
+    }
+
+    function testConvertToShares() public view {
+        uint256 assets = 1000 * 1e18;
+        uint256 shares = theVault.convertToShares(assets);
+        assertEq(shares, assets); // 1:1 ratio
+    }
+
+    function testConvertToAssets() public view {
+        uint256 shares = 1000 * 1e18;
+        uint256 assets = theVault.convertToAssets(shares);
+        assertEq(assets, shares); // 1:1 ratio
+    }
+
+    function testPreviewDeposit() public view {
+        uint256 assets = 1000 * 1e18;
+        uint256 shares = theVault.previewDeposit(assets);
+        assertEq(shares, assets); // 1:1 ratio
+    }
+
+    function testPreviewRedeem() public view {
+        uint256 shares = 1000 * 1e18;
+        uint256 assets = theVault.previewRedeem(shares);
+        assertEq(assets, shares); // 1:1 ratio
+    }
+
+    function testPreviewMint() public view {
+        uint256 shares = 1000 * 1e18;
+        uint256 assets = theVault.previewMint(shares);
+        assertEq(assets, shares); // 1:1 ratio
+    }
+
+    function testPreviewWithdraw() public view {
+        uint256 assets = 1000 * 1e18;
+        uint256 shares = theVault.previewWithdraw(assets);
+        assertEq(shares, assets); // 1:1 ratio
+    }
+
+    function testRedeemWithInsufficientBalance() public {
+        vm.startPrank(user1);
+        vm.expectRevert(); // Should revert due to insufficient balance
+        theVault.redeem(1000 * 1e18, user1, user1);
+        vm.stopPrank();
+    }
+
+    function testDepositWithInsufficientAllowance() public {
+        uint256 depositAmount = 1000 * 1e18;
+
+        // Transfer tokens to user1
+        vm.startPrank(owner);
+        depositToken.transfer(user1, depositAmount);
+        vm.stopPrank();
+
+        // Try to deposit without approval
+        vm.startPrank(user1);
+        vm.expectRevert(); // Should revert due to insufficient allowance
+        theVault.deposit(depositAmount, user1);
+        vm.stopPrank();
+    }
+
+    function testCompoundRewardsWithFees() public {
+        uint256 rewardAmount = 1000 * 1e18;
+
+        // Set performance fee
+        vm.startPrank(owner);
+        theVault.setPerformanceFee(100); // 1%
+        vm.stopPrank();
+
+        // Transfer reward tokens to vault
+        vm.startPrank(owner);
+        depositToken.transfer(address(theVault), rewardAmount);
+        vm.stopPrank();
+
+        // Compound rewards for the user
+        vm.startPrank(owner);
+        theVault.compoundRewards(user1);
+        vm.stopPrank();
+
+        // Should not revert
+        assertTrue(true);
+    }
+
+    function testCompoundMultipleRewardsWithFees() public {
+        address[] memory users = new address[](1);
+        users[0] = user1;
+
+        uint256 rewardAmount = 1000 * 1e18;
+
+        // Set performance fee
+        vm.startPrank(owner);
+        theVault.setPerformanceFee(100); // 1%
+        vm.stopPrank();
+
+        // Transfer reward tokens to vault
+        vm.startPrank(owner);
+        depositToken.transfer(address(theVault), rewardAmount);
+        vm.stopPrank();
+
+        // Compound rewards for multiple users
+        vm.startPrank(owner);
+        theVault.compoundMultipleRewards(users);
+        vm.stopPrank();
+
+        // Should not revert
+        assertTrue(true);
+    }
+
+    function testEmergencyWithdrawWithInsufficientBalance() public {
+        vm.startPrank(owner);
+        vm.expectRevert(); // Should revert due to insufficient balance
+        theVault.emergencyWithdraw(address(depositToken), 1000 * 1e18);
+        vm.stopPrank();
+    }
+
+    function testUpdateRewardTokenEvent() public {
+        address newRewardToken = address(0x789);
+
+        vm.startPrank(owner);
+        vm.expectEmit(true, true, true, true);
+        emit TheVault.RewardTokenUpdated(address(theVault.rewardToken()), newRewardToken);
+        theVault.updateRewardToken(newRewardToken);
+        vm.stopPrank();
+
+        assertEq(address(theVault.rewardToken()), newRewardToken);
+    }
+
+    // Additional tests to achieve 100% coverage
+    function testMaxPerformanceFee() public view {
+        uint256 maxFee = theVault.MAX_PERFORMANCE_FEE();
+        assertEq(maxFee, 1000); // 10%
+    }
+
+    function testConstructorWithZeroAddress() public {
+        // Test constructor validation
+        vm.expectRevert(TheVault.TheVault__InvalidAddress.selector);
+        new TheVault(address(0), address(depositToken), "Test", "TEST");
+    }
+
+    function testConstructorWithZeroAsset() public {
+        // Test constructor validation
+        vm.expectRevert(TheVault.TheVault__InvalidAddress.selector);
+        new TheVault(address(theFarm), address(0), "Test", "TEST");
+    }
+
+    function testGetUserPercentageWithShares() public {
+        uint256 depositAmount = 1000 * 1e18;
+
+        // Transfer tokens to user1
+        vm.startPrank(owner);
+        depositToken.transfer(user1, depositAmount);
+        vm.stopPrank();
+
+        // User1 deposits
+        vm.startPrank(user1);
+        depositToken.approve(address(theVault), depositAmount);
+        theVault.deposit(depositAmount, user1);
+        vm.stopPrank();
+
+        // Check user percentage
+        uint256 percentage = theVault.balanceOf(user1);
+        assertEq(percentage, depositAmount);
+    }
+
+    function testCompoundRewardsWithZeroFee() public {
+        uint256 rewardAmount = 1000 * 1e18;
+
+        // Set performance fee to 0
+        vm.startPrank(owner);
+        theVault.setPerformanceFee(0);
+        vm.stopPrank();
+
+        // Transfer reward tokens to vault
+        vm.startPrank(owner);
+        depositToken.transfer(address(theVault), rewardAmount);
+        vm.stopPrank();
+
+        // Compound rewards for the user
+        vm.startPrank(owner);
+        theVault.compoundRewards(user1);
+        vm.stopPrank();
+
+        // Should not revert
+        assertTrue(true);
+    }
+
+    function testCompoundRewardsWithMaxFee() public {
+        uint256 rewardAmount = 1000 * 1e18;
+
+        // Set performance fee to max
+        vm.startPrank(owner);
+        theVault.setPerformanceFee(theVault.MAX_PERFORMANCE_FEE());
+        vm.stopPrank();
+
+        // Transfer reward tokens to vault
+        vm.startPrank(owner);
+        depositToken.transfer(address(theVault), rewardAmount);
+        vm.stopPrank();
+
+        // Compound rewards for the user
+        vm.startPrank(owner);
+        theVault.compoundRewards(user1);
+        vm.stopPrank();
+
+        // Should not revert
+        assertTrue(true);
+    }
+
+    function testCompoundMultipleRewardsWithZeroFee() public {
+        address[] memory users = new address[](1);
+        users[0] = user1;
+
+        uint256 rewardAmount = 1000 * 1e18;
+
+        // Set performance fee to 0
+        vm.startPrank(owner);
+        theVault.setPerformanceFee(0);
+        vm.stopPrank();
+
+        // Transfer reward tokens to vault
+        vm.startPrank(owner);
+        depositToken.transfer(address(theVault), rewardAmount);
+        vm.stopPrank();
+
+        // Compound rewards for multiple users
+        vm.startPrank(owner);
+        theVault.compoundMultipleRewards(users);
+        vm.stopPrank();
+
+        // Should not revert
+        assertTrue(true);
+    }
+
+    function testCompoundMultipleRewardsWithMaxFee() public {
+        address[] memory users = new address[](1);
+        users[0] = user1;
+
+        uint256 rewardAmount = 1000 * 1e18;
+
+        // Set performance fee to max
+        vm.startPrank(owner);
+        theVault.setPerformanceFee(theVault.MAX_PERFORMANCE_FEE());
+        vm.stopPrank();
+
+        // Transfer reward tokens to vault
+        vm.startPrank(owner);
+        depositToken.transfer(address(theVault), rewardAmount);
+        vm.stopPrank();
+
+        // Compound rewards for multiple users
+        vm.startPrank(owner);
+        theVault.compoundMultipleRewards(users);
+        vm.stopPrank();
+
+        // Should not revert
+        assertTrue(true);
+    }
+
+    function testDepositWithZeroAmount() public {
+        vm.startPrank(user1);
+        // Should revert with zero amount
+        vm.expectRevert();
+        theVault.deposit(0, user1);
+        vm.stopPrank();
+    }
+
+    function testRedeemWithZeroAmount() public {
+        vm.startPrank(user1);
+        // Should revert with zero amount
+        vm.expectRevert();
+        theVault.redeem(0, user1, user1);
+        vm.stopPrank();
+    }
+
+    function testEmergencyWithdrawWithZeroAmount() public {
+        vm.startPrank(owner);
+        // Should not revert with zero amount
+        theVault.emergencyWithdraw(address(depositToken), 0);
+        vm.stopPrank();
+    }
+
+    function testFeeRecipientInitialization() public view {
+        address recipient = theVault.feeRecipient();
+        assertEq(recipient, owner);
+    }
+
+    function testAutoRestakeThresholdInitialization() public view {
+        uint256 threshold = theVault.autoRestakeThreshold();
+        assertEq(threshold, 100 * 1e18); // DEFAULT_THRESHOLD
+    }
+
+    function testPerformanceFeeInitialization() public view {
+        uint256 fee = theVault.performanceFee();
+        assertEq(fee, 100); // 1%
+    }
+
+    function testRewardTokenInitialization() public view {
+        address token = address(theVault.rewardToken());
+        assertEq(token, address(depositToken)); // Should be same as staking token in test setup
+    }
+
+    function testStakingTokenInitialization() public view {
+        address token = address(theVault.stakingToken());
+        assertEq(token, address(depositToken));
+    }
+
+    function testTheFarmInitialization() public view {
+        address farm = address(theVault.theFarm());
+        assertEq(farm, address(theFarm));
+    }
+
+    function testTotalRewardsCollectedInitialization() public view {
+        uint256 total = theVault.getTotalRewardsCollected();
+        assertEq(total, 0);
+    }
 }

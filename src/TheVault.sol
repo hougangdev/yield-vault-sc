@@ -30,20 +30,27 @@ contract TheVault is ERC4626, Ownable, ReentrancyGuard {
     IERC20 public rewardToken;
     IERC20 public immutable stakingToken;
     uint256 public totalRewardsCollected;
-    uint256 public autoRestakeThreshold = 100 * 1e18; // 100 tokens
+    uint256 public autoRestakeThreshold = DEFAULT_THRESHOLD; // 100 tokens
+
+    // Constants for token amounts
+    uint256 private constant DEFAULT_THRESHOLD = 100 * 1e18;
     uint256 public performanceFee = 100; // 1% default
     uint256 public constant MAX_PERFORMANCE_FEE = 1000; // 10% max
+
+    // Constants for precision calculations
+    uint256 private constant BASIS_POINTS = 10000;
     address public feeRecipient;
 
     /*//////////////////////////////////////////////////////////////
                                  EVENTS
     //////////////////////////////////////////////////////////////*/
-    event RewardsCollected(uint256 amount);
-    event AutoRestakeThresholdUpdated(uint256 oldThreshold, uint256 newThreshold);
-    event PerformanceFeeUpdated(uint256 oldFee, uint256 newFee);
-    event FeeRecipientUpdated(address oldRecipient, address newRecipient);
-    event EmergencyWithdraw(address token, uint256 amount);
-    event CompoundRewards(address user, uint256 rewardAmount, uint256 feeAmount);
+    event RewardsCollected(uint256 indexed amount);
+    event AutoRestakeThresholdUpdated(uint256 indexed oldThreshold, uint256 indexed newThreshold);
+    event PerformanceFeeUpdated(uint256 indexed oldFee, uint256 indexed newFee);
+    event FeeRecipientUpdated(address indexed oldRecipient, address indexed newRecipient);
+    event EmergencyWithdraw(address indexed token, uint256 indexed amount);
+    event CompoundRewards(address indexed user, uint256 indexed rewardAmount, uint256 indexed feeAmount);
+    event RewardTokenUpdated(address indexed oldToken, address indexed newToken);
 
     /*//////////////////////////////////////////////////////////////
                                  CONSTRUCTOR
@@ -68,34 +75,34 @@ contract TheVault is ERC4626, Ownable, ReentrancyGuard {
 
     /**
      * @dev Update auto-restake threshold (only owner)
-     * @param _threshold New threshold value
+     * @param threshold_ New threshold value
      */
-    function setAutoRestakeThreshold(uint256 _threshold) external onlyOwner {
+    function setAutoRestakeThreshold(uint256 threshold_) external onlyOwner {
         uint256 oldThreshold = autoRestakeThreshold;
-        autoRestakeThreshold = _threshold;
-        emit AutoRestakeThresholdUpdated(oldThreshold, _threshold);
+        autoRestakeThreshold = threshold_;
+        emit AutoRestakeThresholdUpdated(oldThreshold, threshold_);
     }
 
     /**
      * @dev Update performance fee (only owner)
-     * @param _fee New fee in basis points (e.g., 100 = 1%)
+     * @param fee_ New fee in basis points (e.g., 100 = 1%)
      */
-    function setPerformanceFee(uint256 _fee) external onlyOwner {
-        if (_fee > MAX_PERFORMANCE_FEE) revert TheVault__InvalidAmount();
+    function setPerformanceFee(uint256 fee_) external onlyOwner {
+        if (fee_ > MAX_PERFORMANCE_FEE) revert TheVault__InvalidAmount();
         uint256 oldFee = performanceFee;
-        performanceFee = _fee;
-        emit PerformanceFeeUpdated(oldFee, _fee);
+        performanceFee = fee_;
+        emit PerformanceFeeUpdated(oldFee, fee_);
     }
 
     /**
      * @dev Update fee recipient (only owner)
-     * @param _feeRecipient New fee recipient address
+     * @param feeRecipient_ New fee recipient address
      */
-    function setFeeRecipient(address _feeRecipient) external onlyOwner {
-        if (_feeRecipient == address(0)) revert TheVault__InvalidAddress();
+    function setFeeRecipient(address feeRecipient_) external onlyOwner {
+        if (feeRecipient_ == address(0)) revert TheVault__InvalidAddress();
         address oldRecipient = feeRecipient;
-        feeRecipient = _feeRecipient;
-        emit FeeRecipientUpdated(oldRecipient, _feeRecipient);
+        feeRecipient = feeRecipient_;
+        emit FeeRecipientUpdated(oldRecipient, feeRecipient_);
     }
 
     /**
@@ -112,7 +119,7 @@ contract TheVault is ERC4626, Ownable, ReentrancyGuard {
             // For auto-compounding, we'll assume rewards are already available
 
             // Calculate fee
-            uint256 feeAmount = (pendingRewards * performanceFee) / 10000;
+            uint256 feeAmount = (pendingRewards * performanceFee) / BASIS_POINTS;
             uint256 rewardAfterFee = pendingRewards - feeAmount;
 
             // Transfer fee to fee recipient
@@ -126,13 +133,15 @@ contract TheVault is ERC4626, Ownable, ReentrancyGuard {
 
             // Restake the rewards
             if (rewardAfterFee > 0) {
-                rewardToken.approve(address(theFarm), rewardAfterFee);
+                // Update state before external calls to prevent reentrancy
+                totalRewardsCollected += rewardAfterFee;
+
+                rewardToken.forceApprove(address(theFarm), rewardAfterFee);
                 theFarm.stake(rewardAfterFee);
 
                 // Mint additional vault shares to the user
                 _mint(user, rewardAfterFee);
 
-                totalRewardsCollected += rewardAfterFee;
                 emit CompoundRewards(user, pendingRewards, feeAmount);
             }
         }
@@ -150,7 +159,7 @@ contract TheVault is ERC4626, Ownable, ReentrancyGuard {
             uint256 pendingRewards = theFarm.getPendingRewards(users[i]);
 
             if (pendingRewards > 0) {
-                uint256 feeAmount = (pendingRewards * performanceFee) / 10000;
+                uint256 feeAmount = (pendingRewards * performanceFee) / BASIS_POINTS;
                 uint256 rewardAfterFee = pendingRewards - feeAmount;
 
                 if (feeAmount > 0) {
@@ -159,7 +168,7 @@ contract TheVault is ERC4626, Ownable, ReentrancyGuard {
                 }
 
                 if (rewardAfterFee > 0) {
-                    rewardToken.approve(address(theFarm), rewardAfterFee);
+                    rewardToken.forceApprove(address(theFarm), rewardAfterFee);
                     theFarm.stake(rewardAfterFee);
                     _mint(users[i], rewardAfterFee);
                     totalCompounded += rewardAfterFee;
@@ -168,6 +177,7 @@ contract TheVault is ERC4626, Ownable, ReentrancyGuard {
         }
 
         if (totalCompounded > 0) {
+            // Update state before emitting event to prevent reentrancy
             totalRewardsCollected += totalCompounded;
             emit RewardsCollected(totalCompounded);
         }
@@ -190,7 +200,7 @@ contract TheVault is ERC4626, Ownable, ReentrancyGuard {
         _mint(receiver, shares);
 
         // Stake assets in TheFarm
-        IERC20(asset()).approve(address(theFarm), assets);
+        IERC20(asset()).forceApprove(address(theFarm), assets);
         theFarm.stake(assets);
 
         emit Deposit(msg.sender, receiver, assets, shares);
@@ -329,10 +339,12 @@ contract TheVault is ERC4626, Ownable, ReentrancyGuard {
 
     /**
      * @dev Update reward token reference (only owner)
-     * @param _rewardToken New reward token address
+     * @param rewardToken_ New reward token address
      */
-    function updateRewardToken(address _rewardToken) external onlyOwner {
-        if (_rewardToken == address(0)) revert TheVault__InvalidRewardToken();
-        rewardToken = IERC20(_rewardToken);
+    function updateRewardToken(address rewardToken_) external onlyOwner {
+        if (rewardToken_ == address(0)) revert TheVault__InvalidRewardToken();
+        address oldToken = address(rewardToken);
+        rewardToken = IERC20(rewardToken_);
+        emit RewardTokenUpdated(oldToken, rewardToken_);
     }
 }

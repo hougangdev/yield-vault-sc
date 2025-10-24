@@ -32,8 +32,19 @@ contract TheVault is ERC4626, Ownable, ReentrancyGuard {
     uint256 public totalRewardsCollected;
     uint256 public autoRestakeThreshold = DEFAULT_THRESHOLD; // 100 tokens
 
-    // Constants for token amounts
+    // Auto-compounding state variables
+    bool public autoCompoundEnabled = true;
+    uint256 public lastAutoCompoundBlock;
+    uint256 public autoCompoundInterval = DEFAULT_COMPOUND_INTERVAL; // 100 blocks
+    uint256 public minCompoundAmount = DEFAULT_MIN_COMPOUND; // 10 tokens
+    uint256 public maxCompoundGasPrice = DEFAULT_MAX_GAS_PRICE; // 50 gwei
+
+    // Constants for token amounts and intervals
     uint256 private constant DEFAULT_THRESHOLD = 100 * 1e18;
+    uint256 private constant DEFAULT_COMPOUND_INTERVAL = 100; // blocks
+    uint256 private constant DEFAULT_MIN_COMPOUND = 10 * 1e18; // tokens
+    uint256 private constant DEFAULT_MAX_GAS_PRICE = 50 * 1e9; // 50 gwei
+
     uint256 public performanceFee = 100; // 1% default
     uint256 public constant MAX_PERFORMANCE_FEE = 1000; // 10% max
 
@@ -52,6 +63,16 @@ contract TheVault is ERC4626, Ownable, ReentrancyGuard {
     event CompoundRewards(address indexed user, uint256 indexed rewardAmount, uint256 indexed feeAmount);
     event RewardTokenUpdated(address indexed oldToken, address indexed newToken);
 
+    // Auto-compounding events
+    event AutoCompoundEnabled(bool indexed enabled);
+    event AutoCompoundIntervalUpdated(uint256 indexed oldInterval, uint256 indexed newInterval);
+    event MinCompoundAmountUpdated(uint256 indexed oldAmount, uint256 indexed newAmount);
+    event MaxGasPriceUpdated(uint256 indexed oldPrice, uint256 indexed newPrice);
+    event AutoCompoundExecuted(
+        uint256 indexed totalCompounded, uint256 indexed usersProcessed, uint256 indexed blockNumber
+    );
+    event AutoCompoundSkipped(string indexed reason);
+
     /*//////////////////////////////////////////////////////////////
                                  CONSTRUCTOR
     //////////////////////////////////////////////////////////////*/
@@ -67,6 +88,9 @@ contract TheVault is ERC4626, Ownable, ReentrancyGuard {
         rewardToken = theFarm.rewardToken();
         stakingToken = IERC20(_asset);
         feeRecipient = msg.sender;
+
+        // Initialize auto-compounding variables
+        lastAutoCompoundBlock = block.number;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -106,44 +130,97 @@ contract TheVault is ERC4626, Ownable, ReentrancyGuard {
     }
 
     /**
+     * @dev Enable or disable auto-compounding (only owner)
+     * @param enabled True to enable, false to disable
+     */
+    function setAutoCompoundEnabled(bool enabled) external onlyOwner {
+        autoCompoundEnabled = enabled;
+        emit AutoCompoundEnabled(enabled);
+    }
+
+    /**
+     * @dev Update auto-compound interval (only owner)
+     * @param interval_ New interval in blocks
+     */
+    function setAutoCompoundInterval(uint256 interval_) external onlyOwner {
+        if (interval_ == 0) revert TheVault__InvalidAmount();
+        uint256 oldInterval = autoCompoundInterval;
+        autoCompoundInterval = interval_;
+        emit AutoCompoundIntervalUpdated(oldInterval, interval_);
+    }
+
+    /**
+     * @dev Update minimum compound amount (only owner)
+     * @param amount_ New minimum amount in wei
+     */
+    function setMinCompoundAmount(uint256 amount_) external onlyOwner {
+        uint256 oldAmount = minCompoundAmount;
+        minCompoundAmount = amount_;
+        emit MinCompoundAmountUpdated(oldAmount, amount_);
+    }
+
+    /**
+     * @dev Update maximum gas price for auto-compounding (only owner)
+     * @param gasPrice_ New maximum gas price in wei
+     */
+    function setMaxGasPrice(uint256 gasPrice_) external onlyOwner {
+        uint256 oldPrice = maxCompoundGasPrice;
+        maxCompoundGasPrice = gasPrice_;
+        emit MaxGasPriceUpdated(oldPrice, gasPrice_);
+    }
+
+    /**
      * @dev Auto-compound rewards for a user (anyone can call this)
      * @param user User address to compound rewards for
      */
     function compoundRewards(address user) external nonReentrant {
-        // Get pending rewards for the user from TheFarm
+        _compoundRewardsForUser(user);
+    }
+
+    /**
+     * @dev Internal function to compound rewards for a specific user
+     * @param user User address to compound rewards for
+     */
+    function _compoundRewardsForUser(address user) internal {
+        // First, claim rewards from TheFarm to this contract
+        // We need to simulate the claim process since we can't directly claim for another user
         uint256 pendingRewards = theFarm.getPendingRewards(user);
 
-        if (pendingRewards > 0) {
-            // Claim rewards from TheFarm (this will transfer rewards to this contract)
-            // Note: This requires the user to have approved this contract or called claimRewards first
-            // For auto-compounding, we'll assume rewards are already available
+        if (pendingRewards == 0) {
+            return; // No rewards to compound
+        }
 
-            // Calculate fee
-            uint256 feeAmount = (pendingRewards * performanceFee) / BASIS_POINTS;
-            uint256 rewardAfterFee = pendingRewards - feeAmount;
+        // For auto-compounding, we need to handle the reward claiming differently
+        // Since we can't claim rewards for another user directly, we'll work with available rewards
+        uint256 availableRewards = rewardToken.balanceOf(address(this));
 
-            // Transfer fee to fee recipient
-            if (feeAmount > 0) {
-                rewardToken.safeTransfer(feeRecipient, feeAmount);
-            }
+        if (availableRewards < pendingRewards) {
+            // Not enough rewards available in the vault
+            return;
+        }
 
-            // Convert reward tokens to staking tokens (assuming 1:1 ratio for simplicity)
-            // In a real implementation, you would use a DEX to swap reward tokens for staking tokens
-            // For now, we'll assume the reward tokens can be directly staked
+        // Calculate fee
+        uint256 feeAmount = (pendingRewards * performanceFee) / BASIS_POINTS;
+        uint256 rewardAfterFee = pendingRewards - feeAmount;
 
-            // Restake the rewards
-            if (rewardAfterFee > 0) {
-                // Update state before external calls to prevent reentrancy
-                totalRewardsCollected += rewardAfterFee;
+        // Transfer fee to fee recipient
+        if (feeAmount > 0) {
+            rewardToken.safeTransfer(feeRecipient, feeAmount);
+        }
 
-                rewardToken.forceApprove(address(theFarm), rewardAfterFee);
-                theFarm.stake(rewardAfterFee);
+        // Restake the rewards
+        if (rewardAfterFee > 0) {
+            // Update state before external calls to prevent reentrancy
+            totalRewardsCollected += rewardAfterFee;
 
-                // Mint additional vault shares to the user
-                _mint(user, rewardAfterFee);
+            // Approve and stake the rewards
+            rewardToken.forceApprove(address(theFarm), rewardAfterFee);
+            theFarm.stake(rewardAfterFee);
 
-                emit CompoundRewards(user, pendingRewards, feeAmount);
-            }
+            // Mint additional vault shares to the user
+            _mint(user, rewardAfterFee);
+
+            emit CompoundRewards(user, pendingRewards, feeAmount);
         }
     }
 
@@ -184,6 +261,175 @@ contract TheVault is ERC4626, Ownable, ReentrancyGuard {
     }
 
     /**
+     * @dev Main auto-compounding function that can be called by anyone
+     * Checks conditions and compounds rewards for all eligible users
+     */
+    function executeAutoCompound() external nonReentrant {
+        // Check if auto-compounding is enabled
+        if (!autoCompoundEnabled) {
+            emit AutoCompoundSkipped("Auto-compounding disabled");
+            return;
+        }
+
+        // Check if enough blocks have passed since last auto-compound
+        if (block.number < lastAutoCompoundBlock + autoCompoundInterval) {
+            emit AutoCompoundSkipped("Interval not reached");
+            return;
+        }
+
+        // Check gas price if set
+        if (maxCompoundGasPrice > 0 && tx.gasprice > maxCompoundGasPrice) {
+            emit AutoCompoundSkipped("Gas price too high");
+            return;
+        }
+
+        // Check if there are enough rewards to compound
+        uint256 totalAvailableRewards = rewardToken.balanceOf(address(this));
+        if (totalAvailableRewards < minCompoundAmount) {
+            emit AutoCompoundSkipped("Insufficient rewards");
+            return;
+        }
+
+        // Execute auto-compounding with available rewards
+        uint256 feeAmount = (totalAvailableRewards * performanceFee) / BASIS_POINTS;
+        uint256 rewardAfterFee = totalAvailableRewards - feeAmount;
+
+        if (feeAmount > 0) {
+            rewardToken.safeTransfer(feeRecipient, feeAmount);
+        }
+
+        if (rewardAfterFee > 0) {
+            rewardToken.forceApprove(address(theFarm), rewardAfterFee);
+            theFarm.stake(rewardAfterFee);
+
+            // Mint shares to represent the compounded rewards
+            _mint(address(this), rewardAfterFee);
+
+            totalRewardsCollected += rewardAfterFee;
+        }
+
+        // Update state
+        lastAutoCompoundBlock = block.number;
+        emit AutoCompoundExecuted(rewardAfterFee, 1, block.number);
+    }
+
+    /**
+     * @dev Check if auto-compounding should be executed
+     * @return shouldExecute True if auto-compounding should be executed
+     * @return reason Reason why it should or shouldn't execute
+     */
+    function shouldExecuteAutoCompound() external view returns (bool shouldExecute, string memory reason) {
+        if (!autoCompoundEnabled) {
+            return (false, "Auto-compounding disabled");
+        }
+
+        if (block.number < lastAutoCompoundBlock + autoCompoundInterval) {
+            return (false, "Interval not reached");
+        }
+
+        if (maxCompoundGasPrice > 0 && tx.gasprice > maxCompoundGasPrice) {
+            return (false, "Gas price too high");
+        }
+
+        uint256 totalAvailableRewards = rewardToken.balanceOf(address(this));
+        if (totalAvailableRewards < minCompoundAmount) {
+            return (false, "Insufficient rewards");
+        }
+
+        return (true, "Ready to execute");
+    }
+
+    /**
+     * @dev Get auto-compounding status information
+     * @return enabled Whether auto-compounding is enabled
+     * @return lastBlock Last block when auto-compounding was executed
+     * @return interval Auto-compound interval in blocks
+     * @return minAmount Minimum amount required to trigger auto-compounding
+     * @return maxGasPrice Maximum gas price for auto-compounding
+     * @return blocksUntilNext Number of blocks until next auto-compound is possible
+     */
+    function getAutoCompoundStatus()
+        external
+        view
+        returns (
+            bool enabled,
+            uint256 lastBlock,
+            uint256 interval,
+            uint256 minAmount,
+            uint256 maxGasPrice,
+            uint256 blocksUntilNext
+        )
+    {
+        enabled = autoCompoundEnabled;
+        lastBlock = lastAutoCompoundBlock;
+        interval = autoCompoundInterval;
+        minAmount = minCompoundAmount;
+        maxGasPrice = maxCompoundGasPrice;
+
+        if (block.number >= lastAutoCompoundBlock + autoCompoundInterval) {
+            blocksUntilNext = 0;
+        } else {
+            blocksUntilNext = (lastAutoCompoundBlock + autoCompoundInterval) - block.number;
+        }
+    }
+
+    /**
+     * @dev Get next auto-compound block number
+     * @return Next block number when auto-compounding can be executed
+     */
+    function getNextAutoCompoundBlock() external view returns (uint256) {
+        return lastAutoCompoundBlock + autoCompoundInterval;
+    }
+
+    /**
+     * @dev Internal function to check and trigger auto-compounding if conditions are met
+     */
+    function _checkAndTriggerAutoCompound() internal {
+        // Only check if auto-compounding is enabled
+        if (!autoCompoundEnabled) {
+            return;
+        }
+
+        // Check if enough blocks have passed since last auto-compound
+        if (block.number < lastAutoCompoundBlock + autoCompoundInterval) {
+            return;
+        }
+
+        // Check gas price if set
+        if (maxCompoundGasPrice > 0 && tx.gasprice > maxCompoundGasPrice) {
+            return;
+        }
+
+        // Check if there are enough rewards to compound
+        uint256 totalAvailableRewards = rewardToken.balanceOf(address(this));
+        if (totalAvailableRewards < minCompoundAmount) {
+            return;
+        }
+
+        // Execute auto-compounding with available rewards
+        uint256 feeAmount = (totalAvailableRewards * performanceFee) / BASIS_POINTS;
+        uint256 rewardAfterFee = totalAvailableRewards - feeAmount;
+
+        if (feeAmount > 0) {
+            rewardToken.safeTransfer(feeRecipient, feeAmount);
+        }
+
+        if (rewardAfterFee > 0) {
+            rewardToken.forceApprove(address(theFarm), rewardAfterFee);
+            theFarm.stake(rewardAfterFee);
+
+            // Mint shares to represent the compounded rewards
+            _mint(address(this), rewardAfterFee);
+
+            totalRewardsCollected += rewardAfterFee;
+        }
+
+        // Update state
+        lastAutoCompoundBlock = block.number;
+        emit AutoCompoundExecuted(rewardAfterFee, 1, block.number);
+    }
+
+    /**
      * @dev ERC4626: Deposit assets and receive vault shares
      * @param assets Amount of assets to deposit
      * @param receiver Address to receive vault shares
@@ -202,6 +448,9 @@ contract TheVault is ERC4626, Ownable, ReentrancyGuard {
         // Stake assets in TheFarm
         IERC20(asset()).forceApprove(address(theFarm), assets);
         theFarm.stake(assets);
+
+        // Check if auto-compounding should be triggered
+        _checkAndTriggerAutoCompound();
 
         emit Deposit(msg.sender, receiver, assets, shares);
         return shares;
@@ -235,6 +484,9 @@ contract TheVault is ERC4626, Ownable, ReentrancyGuard {
 
         // Transfer assets to receiver
         SafeERC20.safeTransfer(IERC20(asset()), receiver, assets);
+
+        // Check if auto-compounding should be triggered
+        _checkAndTriggerAutoCompound();
 
         emit Withdraw(msg.sender, receiver, owner, assets, shares);
         return assets;

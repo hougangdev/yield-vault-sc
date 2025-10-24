@@ -694,4 +694,367 @@ contract TheVaultTest is Test {
         uint256 total = theVault.getTotalRewardsCollected();
         assertEq(total, 0);
     }
+
+    // ============ AUTO-COMPOUNDING TESTS ============
+
+    function testAutoCompoundEnabledInitialization() public view {
+        assertTrue(theVault.autoCompoundEnabled());
+    }
+
+    function testAutoCompoundIntervalInitialization() public view {
+        assertEq(theVault.autoCompoundInterval(), 100); // DEFAULT_COMPOUND_INTERVAL
+    }
+
+    function testMinCompoundAmountInitialization() public view {
+        assertEq(theVault.minCompoundAmount(), 10 * 1e18); // DEFAULT_MIN_COMPOUND
+    }
+
+    function testMaxGasPriceInitialization() public view {
+        assertEq(theVault.maxCompoundGasPrice(), 50 * 1e9); // DEFAULT_MAX_GAS_PRICE
+    }
+
+    function testLastAutoCompoundBlockInitialization() public view {
+        assertEq(theVault.lastAutoCompoundBlock(), block.number);
+    }
+
+    function testSetAutoCompoundEnabled() public {
+        vm.startPrank(owner);
+        vm.expectEmit(true, true, true, true);
+        emit TheVault.AutoCompoundEnabled(false);
+        theVault.setAutoCompoundEnabled(false);
+        vm.stopPrank();
+
+        assertFalse(theVault.autoCompoundEnabled());
+    }
+
+    function testSetAutoCompoundEnabledOnlyOwner() public {
+        vm.startPrank(user1);
+        vm.expectRevert();
+        theVault.setAutoCompoundEnabled(false);
+        vm.stopPrank();
+    }
+
+    function testSetAutoCompoundInterval() public {
+        uint256 newInterval = 200;
+
+        vm.startPrank(owner);
+        vm.expectEmit(true, true, true, true);
+        emit TheVault.AutoCompoundIntervalUpdated(theVault.autoCompoundInterval(), newInterval);
+        theVault.setAutoCompoundInterval(newInterval);
+        vm.stopPrank();
+
+        assertEq(theVault.autoCompoundInterval(), newInterval);
+    }
+
+    function testSetAutoCompoundIntervalZero() public {
+        vm.startPrank(owner);
+        vm.expectRevert(TheVault.TheVault__InvalidAmount.selector);
+        theVault.setAutoCompoundInterval(0);
+        vm.stopPrank();
+    }
+
+    function testSetAutoCompoundIntervalOnlyOwner() public {
+        vm.startPrank(user1);
+        vm.expectRevert();
+        theVault.setAutoCompoundInterval(200);
+        vm.stopPrank();
+    }
+
+    function testSetMinCompoundAmount() public {
+        uint256 newAmount = 50 * 1e18;
+
+        vm.startPrank(owner);
+        vm.expectEmit(true, true, true, true);
+        emit TheVault.MinCompoundAmountUpdated(theVault.minCompoundAmount(), newAmount);
+        theVault.setMinCompoundAmount(newAmount);
+        vm.stopPrank();
+
+        assertEq(theVault.minCompoundAmount(), newAmount);
+    }
+
+    function testSetMinCompoundAmountOnlyOwner() public {
+        vm.startPrank(user1);
+        vm.expectRevert();
+        theVault.setMinCompoundAmount(50 * 1e18);
+        vm.stopPrank();
+    }
+
+    function testSetMaxGasPrice() public {
+        uint256 newGasPrice = 100 * 1e9;
+
+        vm.startPrank(owner);
+        vm.expectEmit(true, true, true, true);
+        emit TheVault.MaxGasPriceUpdated(theVault.maxCompoundGasPrice(), newGasPrice);
+        theVault.setMaxGasPrice(newGasPrice);
+        vm.stopPrank();
+
+        assertEq(theVault.maxCompoundGasPrice(), newGasPrice);
+    }
+
+    function testSetMaxGasPriceOnlyOwner() public {
+        vm.startPrank(user1);
+        vm.expectRevert();
+        theVault.setMaxGasPrice(100 * 1e9);
+        vm.stopPrank();
+    }
+
+    function testGetAutoCompoundStatus() public view {
+        (
+            bool enabled,
+            uint256 lastBlock,
+            uint256 interval,
+            uint256 minAmount,
+            uint256 maxGasPrice,
+            uint256 blocksUntilNext
+        ) = theVault.getAutoCompoundStatus();
+
+        assertTrue(enabled);
+        assertEq(lastBlock, block.number);
+        assertEq(interval, 100);
+        assertEq(minAmount, 10 * 1e18);
+        assertEq(maxGasPrice, 50 * 1e9);
+        assertEq(blocksUntilNext, 100); // Should be 100 blocks until next
+    }
+
+    function testGetNextAutoCompoundBlock() public view {
+        uint256 nextBlock = theVault.getNextAutoCompoundBlock();
+        assertEq(nextBlock, block.number + 100);
+    }
+
+    function testShouldExecuteAutoCompoundDisabled() public {
+        vm.startPrank(owner);
+        theVault.setAutoCompoundEnabled(false);
+        vm.stopPrank();
+
+        (bool shouldExecute, string memory reason) = theVault.shouldExecuteAutoCompound();
+        assertFalse(shouldExecute);
+        assertEq(reason, "Auto-compounding disabled");
+    }
+
+    function testShouldExecuteAutoCompoundIntervalNotReached() public {
+        (bool shouldExecute, string memory reason) = theVault.shouldExecuteAutoCompound();
+        assertFalse(shouldExecute);
+        assertEq(reason, "Interval not reached");
+    }
+
+    function testShouldExecuteAutoCompoundInsufficientRewards() public {
+        // Fast forward to next compound block
+        vm.roll(block.number + 101);
+
+        (bool shouldExecute, string memory reason) = theVault.shouldExecuteAutoCompound();
+        assertFalse(shouldExecute);
+        assertEq(reason, "Insufficient rewards");
+    }
+
+    function testShouldExecuteAutoCompoundReady() public {
+        // Fast forward to next compound block
+        vm.roll(block.number + 101);
+
+        // Add enough rewards to vault
+        vm.startPrank(owner);
+        depositToken.transfer(address(theVault), 20 * 1e18);
+        vm.stopPrank();
+
+        (bool shouldExecute, string memory reason) = theVault.shouldExecuteAutoCompound();
+        assertTrue(shouldExecute);
+        assertEq(reason, "Ready to execute");
+    }
+
+    function testExecuteAutoCompoundDisabled() public {
+        vm.startPrank(owner);
+        theVault.setAutoCompoundEnabled(false);
+        vm.stopPrank();
+
+        vm.expectEmit(true, true, true, true);
+        emit TheVault.AutoCompoundSkipped("Auto-compounding disabled");
+        theVault.executeAutoCompound();
+    }
+
+    function testExecuteAutoCompoundIntervalNotReached() public {
+        vm.expectEmit(true, true, true, true);
+        emit TheVault.AutoCompoundSkipped("Interval not reached");
+        theVault.executeAutoCompound();
+    }
+
+    function testExecuteAutoCompoundInsufficientRewards() public {
+        // Fast forward to next compound block
+        vm.roll(block.number + 101);
+
+        vm.expectEmit(true, true, true, true);
+        emit TheVault.AutoCompoundSkipped("Insufficient rewards");
+        theVault.executeAutoCompound();
+    }
+
+    function testExecuteAutoCompoundSuccess() public {
+        // Fast forward to next compound block
+        vm.roll(block.number + 101);
+
+        // Add enough rewards to vault
+        uint256 rewardAmount = 20 * 1e18;
+        vm.startPrank(owner);
+        depositToken.transfer(address(theVault), rewardAmount);
+        vm.stopPrank();
+
+        // Execute auto-compound
+        vm.expectEmit(true, true, true, true);
+        emit TheVault.AutoCompoundExecuted(rewardAmount - (rewardAmount * 100 / 10000), 1, block.number);
+        theVault.executeAutoCompound();
+
+        // Check that lastAutoCompoundBlock was updated
+        assertEq(theVault.lastAutoCompoundBlock(), block.number);
+    }
+
+    function testExecuteAutoCompoundWithFees() public {
+        // Set performance fee
+        vm.startPrank(owner);
+        theVault.setPerformanceFee(500); // 5%
+        vm.stopPrank();
+
+        // Fast forward to next compound block
+        vm.roll(block.number + 101);
+
+        // Add enough rewards to vault
+        uint256 rewardAmount = 20 * 1e18;
+        vm.startPrank(owner);
+        depositToken.transfer(address(theVault), rewardAmount);
+        vm.stopPrank();
+
+        uint256 feeAmount = (rewardAmount * 500) / 10000; // 5%
+        uint256 rewardAfterFee = rewardAmount - feeAmount;
+
+        // Execute auto-compound
+        vm.expectEmit(true, true, true, true);
+        emit TheVault.AutoCompoundExecuted(rewardAfterFee, 1, block.number);
+        theVault.executeAutoCompound();
+
+        // Check fee was transferred to fee recipient
+        assertEq(depositToken.balanceOf(owner), INITIAL_SUPPLY - rewardAmount + feeAmount);
+    }
+
+    function testAutoCompoundTriggeredOnDeposit() public {
+        // Fast forward to next compound block
+        vm.roll(block.number + 101);
+
+        // Add rewards to vault
+        vm.startPrank(owner);
+        depositToken.transfer(address(theVault), 20 * 1e18);
+        vm.stopPrank();
+
+        // Transfer tokens to user1
+        vm.startPrank(owner);
+        depositToken.transfer(user1, 1000 * 1e18);
+        vm.stopPrank();
+
+        // User1 deposits - this should trigger auto-compounding
+        vm.startPrank(user1);
+        depositToken.approve(address(theVault), 1000 * 1e18);
+
+        vm.expectEmit(true, true, true, true);
+        emit TheVault.AutoCompoundExecuted(20 * 1e18 - (20 * 1e18 * 100 / 10000), 1, block.number);
+        theVault.deposit(1000 * 1e18, user1);
+        vm.stopPrank();
+    }
+
+    function testAutoCompoundTriggeredOnRedeem() public {
+        // First deposit
+        vm.startPrank(owner);
+        depositToken.transfer(user1, 1000 * 1e18);
+        vm.stopPrank();
+
+        vm.startPrank(user1);
+        depositToken.approve(address(theVault), 1000 * 1e18);
+        theVault.deposit(1000 * 1e18, user1);
+        vm.stopPrank();
+
+        // Fast forward to next compound block
+        vm.roll(block.number + 101);
+
+        // Add rewards to vault
+        vm.startPrank(owner);
+        depositToken.transfer(address(theVault), 20 * 1e18);
+        vm.stopPrank();
+
+        // User1 redeems - this should trigger auto-compounding
+        vm.startPrank(user1);
+        vm.expectEmit(true, true, true, true);
+        emit TheVault.AutoCompoundExecuted(20 * 1e18 - (20 * 1e18 * 100 / 10000), 1, block.number);
+        theVault.redeem(1000 * 1e18, user1, user1);
+        vm.stopPrank();
+    }
+
+    function testAutoCompoundGasPriceCheck() public {
+        // Set max gas price
+        vm.startPrank(owner);
+        theVault.setMaxGasPrice(10 * 1e9); // 10 gwei
+        vm.stopPrank();
+
+        // Fast forward to next compound block
+        vm.roll(block.number + 101);
+
+        // Add enough rewards to vault
+        vm.startPrank(owner);
+        depositToken.transfer(address(theVault), 20 * 1e18);
+        vm.stopPrank();
+
+        // Test with high gas price by using vm.txGasPrice
+        vm.txGasPrice(50 * 1e9); // 50 gwei
+
+        vm.expectEmit(true, true, true, true);
+        emit TheVault.AutoCompoundSkipped("Gas price too high");
+        theVault.executeAutoCompound();
+    }
+
+    function testAutoCompoundIntervalUpdate() public {
+        // Set new interval
+        vm.startPrank(owner);
+        theVault.setAutoCompoundInterval(200);
+        vm.stopPrank();
+
+        // Fast forward to old interval (should not compound)
+        vm.roll(block.number + 101);
+
+        vm.expectEmit(true, true, true, true);
+        emit TheVault.AutoCompoundSkipped("Interval not reached");
+        theVault.executeAutoCompound();
+
+        // Fast forward to new interval (should compound)
+        vm.roll(block.number + 100);
+
+        // Add enough rewards to vault
+        vm.startPrank(owner);
+        depositToken.transfer(address(theVault), 20 * 1e18);
+        vm.stopPrank();
+
+        vm.expectEmit(true, true, true, true);
+        emit TheVault.AutoCompoundExecuted(20 * 1e18 - (20 * 1e18 * 100 / 10000), 1, block.number);
+        theVault.executeAutoCompound();
+    }
+
+    function testAutoCompoundMinAmountUpdate() public {
+        // Set higher min amount
+        vm.startPrank(owner);
+        theVault.setMinCompoundAmount(50 * 1e18);
+        vm.stopPrank();
+
+        // Fast forward to next compound block
+        vm.roll(block.number + 101);
+
+        // Add insufficient rewards to vault
+        vm.startPrank(owner);
+        depositToken.transfer(address(theVault), 20 * 1e18);
+        vm.stopPrank();
+
+        vm.expectEmit(true, true, true, true);
+        emit TheVault.AutoCompoundSkipped("Insufficient rewards");
+        theVault.executeAutoCompound();
+
+        // Add sufficient rewards
+        vm.startPrank(owner);
+        depositToken.transfer(address(theVault), 30 * 1e18);
+        vm.stopPrank();
+
+        vm.expectEmit(true, true, true, true);
+        emit TheVault.AutoCompoundExecuted(50 * 1e18 - (50 * 1e18 * 100 / 10000), 1, block.number);
+        theVault.executeAutoCompound();
+    }
 }

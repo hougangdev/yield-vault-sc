@@ -34,6 +34,12 @@ contract DeployAll is Script {
     uint256 constant DEFAULT_PERFORMANCE_FEE = 100; // 1% in basis points
     uint256 constant MAX_PERFORMANCE_FEE = 1000; // 10% max in basis points
 
+    // Auto-compounding parameters
+    bool constant DEFAULT_AUTO_COMPOUND_ENABLED = true;
+    uint256 constant DEFAULT_AUTO_COMPOUND_INTERVAL = 100; // 100 blocks (~20 minutes)
+    uint256 constant DEFAULT_MIN_COMPOUND_AMOUNT = 10 * 1e18; // 10 tokens
+    uint256 constant DEFAULT_MAX_GAS_PRICE = 50 * 1e9; // 50 gwei
+
     function run() external {
         uint256 deployerPrivateKey = uint256(vm.envBytes32("PRIVATE_KEY"));
         address deployer = vm.addr(deployerPrivateKey);
@@ -87,8 +93,8 @@ contract DeployAll is Script {
         console.log("  - Asset:", address(theVault.asset()));
         console.log("  - Owner:", theVault.owner());
 
-        // Configure TheVault with security parameters
-        console.log("\n4. Configuring TheVault security parameters...");
+        // Configure TheVault with security and auto-compounding parameters
+        console.log("\n4. Configuring TheVault parameters...");
 
         // Set auto-restake threshold
         theVault.setAutoRestakeThreshold(DEFAULT_AUTO_RESTAKE_THRESHOLD);
@@ -103,8 +109,28 @@ contract DeployAll is Script {
         theVault.setFeeRecipient(deployer);
         console.log("[SUCCESS] Fee recipient set to:", theVault.feeRecipient());
 
+        // Configure auto-compounding parameters
+        console.log("\n5. Configuring auto-compounding parameters...");
+
+        // Set auto-compound enabled
+        theVault.setAutoCompoundEnabled(DEFAULT_AUTO_COMPOUND_ENABLED);
+        console.log("[SUCCESS] Auto-compounding enabled:", DEFAULT_AUTO_COMPOUND_ENABLED);
+
+        // Set auto-compound interval
+        theVault.setAutoCompoundInterval(DEFAULT_AUTO_COMPOUND_INTERVAL);
+        console.log("[SUCCESS] Auto-compound interval set to:", DEFAULT_AUTO_COMPOUND_INTERVAL, "blocks");
+        console.log("  Estimated time:", (DEFAULT_AUTO_COMPOUND_INTERVAL * 12) / 60, "minutes (assuming 12s blocks)");
+
+        // Set minimum compound amount
+        theVault.setMinCompoundAmount(DEFAULT_MIN_COMPOUND_AMOUNT);
+        console.log("[SUCCESS] Minimum compound amount set to:", DEFAULT_MIN_COMPOUND_AMOUNT / 1e18, "tokens");
+
+        // Set maximum gas price
+        theVault.setMaxGasPrice(DEFAULT_MAX_GAS_PRICE);
+        console.log("[SUCCESS] Maximum gas price set to:", DEFAULT_MAX_GAS_PRICE / 1e9, "gwei");
+
         // Authorize TheFarm to mint/burn DepositTokens
-        console.log("\n5. Setting up authorization...");
+        console.log("\n6. Setting up authorization...");
         depositToken.setAuthorizedMinter(address(theFarm), true);
         console.log("[SUCCESS] TheFarm authorized to mint/burn DepositTokens");
         console.log("  - Authorized:", depositToken.authorizedMinters(address(theFarm)));
@@ -123,13 +149,30 @@ contract DeployAll is Script {
         console.log("\n=== DEPLOYMENT COMPLETE ===");
         console.log("[SUCCESS] All contracts deployed successfully");
         console.log("[SUCCESS] Security parameters configured");
+        console.log("[SUCCESS] Auto-compounding parameters configured");
         console.log("[SUCCESS] Authorization set up");
-        console.log("[SUCCESS] System ready for use");
+        console.log("[SUCCESS] Yield optimizer vault ready for use");
 
         console.log("\nContract Addresses:");
         console.log("  DepositToken:", address(depositToken));
         console.log("  TheFarm:", address(theFarm));
         console.log("  TheVault:", address(theVault));
+
+        console.log("\n=== USAGE INSTRUCTIONS ===");
+        console.log("Auto-Compounding Yield Optimizer Vault is now ready!");
+        console.log("\nFor Users:");
+        console.log("  1. Approve DepositToken to TheVault");
+        console.log("  2. Call vault.deposit(amount, receiver) to stake");
+        console.log("  3. Auto-compounding will happen automatically!");
+        console.log("  4. Call vault.redeem(shares, receiver, owner) to withdraw");
+        console.log("\nFor Monitoring:");
+        console.log("  - Check auto-compound status: vault.getAutoCompoundStatus()");
+        console.log("  - Monitor events: AutoCompoundExecuted, CompoundRewards");
+        console.log("  - Manual trigger: vault.executeAutoCompound()");
+        console.log("\nFor Governance:");
+        console.log("  - Adjust parameters: setAutoCompoundInterval(), setMinCompoundAmount()");
+        console.log("  - Control fees: setPerformanceFee(), setFeeRecipient()");
+        console.log("  - Emergency: setAutoCompoundEnabled(false)");
     }
 
     /**
@@ -152,6 +195,12 @@ contract DeployAll is Script {
         require(address(theVault.theFarm()) == address(theFarm), "Invalid TheFarm reference");
         require(address(theVault.asset()) == address(depositToken), "Invalid asset reference");
         require(theVault.owner() != address(0), "TheVault owner not set");
+
+        // Verify auto-compounding configuration
+        require(theVault.autoCompoundEnabled() == DEFAULT_AUTO_COMPOUND_ENABLED, "Invalid auto-compound enabled");
+        require(theVault.autoCompoundInterval() == DEFAULT_AUTO_COMPOUND_INTERVAL, "Invalid auto-compound interval");
+        require(theVault.minCompoundAmount() == DEFAULT_MIN_COMPOUND_AMOUNT, "Invalid min compound amount");
+        require(theVault.maxCompoundGasPrice() == DEFAULT_MAX_GAS_PRICE, "Invalid max gas price");
 
         // Verify authorization
         require(depositToken.authorizedMinters(address(theFarm)), "TheFarm not authorized");
@@ -176,6 +225,14 @@ contract DeployAll is Script {
         console.log("  - Performance fee:", theVault.performanceFee(), "basis points");
         console.log("  - Max performance fee:", theVault.MAX_PERFORMANCE_FEE(), "basis points");
         console.log("  - Fee recipient:", theVault.feeRecipient());
+
+        console.log("\nAuto-Compounding Configuration:");
+        console.log("  - Auto-compound enabled:", theVault.autoCompoundEnabled());
+        console.log("  - Compound interval:", theVault.autoCompoundInterval(), "blocks");
+        console.log("  - Min compound amount:", theVault.minCompoundAmount() / 1e18, "tokens");
+        console.log("  - Max gas price:", theVault.maxCompoundGasPrice() / 1e9, "gwei");
+        console.log("  - Last compound block:", theVault.lastAutoCompoundBlock());
+        console.log("  - Next compound block:", theVault.getNextAutoCompoundBlock());
 
         console.log("\nFarm Configuration:");
         console.log("  - Reward rate:", theFarm.REWARD_RATE(), "tokens per block");

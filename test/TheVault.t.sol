@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity 0.8.24;
 
 import "forge-std/Test.sol";
 import "../src/TheVault.sol";
@@ -32,7 +32,7 @@ contract TheVaultTest is Test {
 
         theFarm = new TheFarm(address(depositToken), address(depositToken), RECEIPT_TOKEN_NAME, RECEIPT_TOKEN_SYMBOL);
 
-        theVault = new TheVault(address(theFarm), address(depositToken));
+        theVault = new TheVault(address(theFarm), address(depositToken), "Test Vault Token", "TVT");
 
         depositToken.setAuthorizedMinter(address(theFarm), true);
 
@@ -41,9 +41,9 @@ contract TheVaultTest is Test {
 
     function testInitialSetup() public view {
         assertEq(address(theVault.theFarm()), address(theFarm));
-        assertEq(address(theVault.depositToken()), address(depositToken));
+        assertEq(address(theVault.asset()), address(depositToken));
         assertEq(theVault.getTotalRewardsCollected(), 0);
-        assertEq(theVault.getUserShare(user1), 0);
+        assertEq(theVault.balanceOf(user1), 0);
     }
 
     function testAutoRestakeThreshold() public {
@@ -57,7 +57,7 @@ contract TheVaultTest is Test {
     }
 
     function testGetUserPercentage() public view {
-        uint256 percentage = theVault.getUserPercentage(user1);
+        uint256 percentage = theVault.balanceOf(user1);
         assertEq(percentage, 0); // Should be 0 when no shares
     }
 }

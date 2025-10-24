@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity 0.8.24;
 
 import "forge-std/Test.sol";
 import "../src/DepositToken.sol";
@@ -41,7 +41,7 @@ contract TheFarmTest is Test {
             RECEIPT_TOKEN_SYMBOL
         );
 
-        theVault = new TheVault(address(theFarm), address(depositToken));
+        theVault = new TheVault(address(theFarm), address(depositToken), "Test Vault Token", "TVT");
 
         // Authorize TheFarm to mint/burn DepositTokens
         depositToken.setAuthorizedMinter(address(theFarm), true);
@@ -74,7 +74,7 @@ contract TheFarmTest is Test {
         assertEq(theFarm.REWARD_RATE(), 10 * 1e18);
 
         assertEq(address(theVault.theFarm()), address(theFarm));
-        assertEq(address(theVault.depositToken()), address(depositToken));
+        assertEq(address(theVault.asset()), address(depositToken));
     }
 
     function testStaking() public {
@@ -213,7 +213,7 @@ contract TheFarmTest is Test {
         assertEq(totalRewardsCollected, 0); // Should be 0 initially
 
         // Test vault share tracking
-        uint256 userShare = theVault.getUserShare(user1);
+        uint256 userShare = theVault.balanceOf(user1);
         assertEq(userShare, 0); // Should be 0 initially
     }
 

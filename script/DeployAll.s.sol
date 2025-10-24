@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity 0.8.24;
 
 import "forge-std/Script.sol";
 import "../src/DepositToken.sol";
@@ -54,7 +54,7 @@ contract DeployAll is Script {
 
         // Deploy TheVault
         console.log("Deploying TheVault...");
-        theVault = new TheVault(address(theFarm), address(depositToken));
+        theVault = new TheVault(address(theFarm), address(depositToken), "Yield Vault Token", "YVT");
         console.log("TheVault deployed at:", address(theVault));
 
         // Authorize TheFarm to mint/burn DepositTokens
@@ -79,6 +79,6 @@ contract DeployAll is Script {
         console.log("TheFarm reward token:", address(theFarm.rewardToken()));
         console.log("TheFarm reward rate:", theFarm.REWARD_RATE());
         console.log("TheVault theFarm:", address(theVault.theFarm()));
-        console.log("TheVault depositToken:", address(theVault.depositToken()));
+        console.log("TheVault asset:", address(theVault.asset()));
     }
 }

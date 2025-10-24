@@ -39,12 +39,13 @@ The yield vault system consists of three integrated contracts:
    - Automatic reward calculation based on blocks
    - Reward claiming functionality
 
-3. **TheVault.sol** - Automated vault management
+3. **TheVault.sol** - ERC4626 compliant vault management
 
    - Collects rewards from TheFarm for users
    - Tracks user shares in the vault
    - Automatic restaking when threshold is met
    - Emergency withdrawal functions
+   - ERC4626 standard compliance for vault operations
 
 ## 🛠️ Development
 
@@ -127,17 +128,14 @@ forge script script/DeployTheVault.s.sol --rpc-url <RPC_URL> --broadcast
 #### Using Cast
 
 ```bash
-# Check user's staked amount
-cast call <farm_address> "userInfo(address)" <user_address> --rpc-url <rpc_url>
+# Deposit assets into vault
+cast send <vault_address> "deposit(uint256,address)" <amount> <receiver_address> --private-key <private_key> --rpc-url <rpc_url>
 
-# Stake tokens
-cast send <farm_address> "stake(uint256)" <amount> --private-key <private_key> --rpc-url <rpc_url>
+# Redeem vault shares
+cast send <vault_address> "redeem(uint256,address,address)" <shares> <receiver_address> <owner_address> --private-key <private_key> --rpc-url <rpc_url>
 
-# Check pending rewards
-cast call <farm_address> "getPendingRewards(address)" <user_address> --rpc-url <rpc_url>
-
-# Claim rewards
-cast send <farm_address> "claimRewards()" --private-key <private_key> --rpc-url <rpc_url>
+# Check vault total assets
+cast call <vault_address> "totalAssets()" --rpc-url <rpc_url>
 ```
 
 ## 🔧 Smart Contract Functions
@@ -150,12 +148,18 @@ cast send <farm_address> "claimRewards()" --private-key <private_key> --rpc-url 
 - `getPendingRewards(address user)` - View pending rewards for a user
 - `setRewardToken(address _rewardToken)` - Update reward token (owner only)
 
-### TheVault Functions
+### TheVault Functions (ERC4626)
 
+- `deposit(uint256 assets, address receiver)` - Deposit assets and receive vault shares
+- `redeem(uint256 shares, address receiver, address owner)` - Redeem vault shares for assets
 - `collectUserRewards(address user)` - Collect rewards for a specific user
 - `collectMultipleUserRewards(address[] users)` - Collect rewards for multiple users
 - `restakeRewards(uint256 amount)` - Manually restake collected rewards
-- `getUserShare(address user)` - Get user's share in the vault
+- `totalAssets()` - Get total assets managed by the vault
+- `convertToShares(uint256 assets)` - Convert assets to shares
+- `convertToAssets(uint256 shares)` - Convert shares to assets
+- `previewDeposit(uint256 assets)` - Preview deposit operation
+- `previewRedeem(uint256 shares)` - Preview redeem operation
 - `setAutoRestakeThreshold(uint256 _threshold)` - Update auto-restake threshold (owner only)
 
 ### DepositToken Functions

@@ -1,31 +1,24 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity 0.8.24;
 
+import "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./TheFarm.sol";
 
 /**
  * @title TheVault
- * @dev Contract to collect staking reward tokens for users and restake to staking contract
+ * @dev ERC4626 compliant vault that collects staking reward tokens for users and restakes to staking contract
  * @notice Automatically collects rewards from TheFarm and restakes them for compound growth
  */
-contract TheVault is Ownable, ReentrancyGuard {
+contract TheVault is ERC4626, Ownable, ReentrancyGuard {
     // TheFarm contract instance
     TheFarm public immutable theFarm;
 
-    // Deposit token (staking token)
-    IERC20 public immutable depositToken;
-
     // Reward token from TheFarm
     IERC20 public rewardToken;
-
-    // Mapping to track user's vault shares
-    mapping(address => uint256) public userShares;
-
-    // Total vault shares
-    uint256 public totalShares;
 
     // Total reward tokens collected and restaked
     uint256 public totalRewardsCollected;
@@ -36,13 +29,15 @@ contract TheVault is Ownable, ReentrancyGuard {
     // Events
     event RewardsCollected(uint256 amount);
     event RewardsRestaked(uint256 amount);
-    event UserSharesUpdated(address indexed user, uint256 oldShares, uint256 newShares);
     event AutoRestakeThresholdUpdated(uint256 oldThreshold, uint256 newThreshold);
     event EmergencyWithdraw(address indexed token, uint256 amount);
 
-    constructor(address _theFarm, address _depositToken) Ownable(msg.sender) {
+    constructor(address _theFarm, address _asset, string memory name, string memory symbol)
+        ERC4626(IERC20(_asset))
+        ERC20(name, symbol)
+        Ownable(msg.sender)
+    {
         theFarm = TheFarm(_theFarm);
-        depositToken = IERC20(_depositToken);
         rewardToken = theFarm.rewardToken();
     }
 
@@ -72,8 +67,8 @@ contract TheVault is Ownable, ReentrancyGuard {
             // For now, we'll assume the user has already claimed or we have permission
             // In a production environment, you might need a different approach
 
-            // Update user shares based on collected rewards
-            _updateUserShares(user, pendingRewards);
+            // Mint vault shares to the user based on collected rewards
+            _mint(user, pendingRewards);
 
             totalRewardsCollected += pendingRewards;
             emit RewardsCollected(pendingRewards);
@@ -96,7 +91,7 @@ contract TheVault is Ownable, ReentrancyGuard {
             uint256 pendingRewards = theFarm.getPendingRewards(users[i]);
 
             if (pendingRewards > 0) {
-                _updateUserShares(users[i], pendingRewards);
+                _mint(users[i], pendingRewards);
                 totalCollected += pendingRewards;
             }
         }
@@ -143,39 +138,122 @@ contract TheVault is Ownable, ReentrancyGuard {
     }
 
     /**
-     * @dev Update user shares based on collected rewards
-     * @param user User address
-     * @param rewardAmount Amount of rewards collected
+     * @dev ERC4626: Deposit assets and receive vault shares
+     * @param assets Amount of assets to deposit
+     * @param receiver Address to receive vault shares
+     * @return shares Amount of vault shares minted
      */
-    function _updateUserShares(address user, uint256 rewardAmount) internal {
-        uint256 oldShares = userShares[user];
-        uint256 newShares = oldShares + rewardAmount;
+    function deposit(uint256 assets, address receiver) public override nonReentrant returns (uint256 shares) {
+        // Transfer assets from caller to vault
+        SafeERC20.safeTransferFrom(IERC20(asset()), msg.sender, address(this), assets);
 
-        userShares[user] = newShares;
-        totalShares += rewardAmount;
+        // Calculate shares to mint (1:1 ratio for simplicity)
+        shares = assets;
 
-        emit UserSharesUpdated(user, oldShares, newShares);
+        // Mint shares to receiver
+        _mint(receiver, shares);
+
+        // Stake assets in TheFarm
+        IERC20(asset()).approve(address(theFarm), assets);
+        theFarm.stake(assets);
+
+        emit Deposit(msg.sender, receiver, assets, shares);
+        return shares;
     }
 
     /**
-     * @dev Get user's share of the vault
-     * @param user User address
-     * @return User's share amount
+     * @dev ERC4626: Redeem vault shares for assets
+     * @param shares Amount of shares to redeem
+     * @param receiver Address to receive assets
+     * @param owner Address that owns the shares
+     * @return assets Amount of assets returned
      */
-    function getUserShare(address user) external view returns (uint256) {
-        return userShares[user];
-    }
-
-    /**
-     * @dev Get user's percentage of total vault
-     * @param user User address
-     * @return User's percentage (scaled by 1e18)
-     */
-    function getUserPercentage(address user) external view returns (uint256) {
-        if (totalShares == 0) {
-            return 0;
+    function redeem(uint256 shares, address receiver, address owner)
+        public
+        override
+        nonReentrant
+        returns (uint256 assets)
+    {
+        if (msg.sender != owner) {
+            _spendAllowance(owner, msg.sender, shares);
         }
-        return (userShares[user] * 1e18) / totalShares;
+
+        // Calculate assets to return (1:1 ratio for simplicity)
+        assets = shares;
+
+        // Unstake from TheFarm
+        theFarm.unstake(assets);
+
+        // Burn shares
+        _burn(owner, shares);
+
+        // Transfer assets to receiver
+        SafeERC20.safeTransfer(IERC20(asset()), receiver, assets);
+
+        emit Withdraw(msg.sender, receiver, owner, assets, shares);
+        return assets;
+    }
+
+    /**
+     * @dev ERC4626: Get total assets managed by the vault
+     * @return Total assets in the vault
+     */
+    function totalAssets() public view override returns (uint256) {
+        return IERC20(asset()).balanceOf(address(this));
+    }
+
+    /**
+     * @dev ERC4626: Convert assets to shares
+     * @param assets Amount of assets
+     * @return shares Amount of shares
+     */
+    function convertToShares(uint256 assets) public view override returns (uint256 shares) {
+        return assets; // 1:1 ratio
+    }
+
+    /**
+     * @dev ERC4626: Convert shares to assets
+     * @param shares Amount of shares
+     * @return assets Amount of assets
+     */
+    function convertToAssets(uint256 shares) public view override returns (uint256 assets) {
+        return shares; // 1:1 ratio
+    }
+
+    /**
+     * @dev ERC4626: Preview deposit
+     * @param assets Amount of assets to deposit
+     * @return shares Amount of shares that would be minted
+     */
+    function previewDeposit(uint256 assets) public view override returns (uint256 shares) {
+        return assets; // 1:1 ratio
+    }
+
+    /**
+     * @dev ERC4626: Preview redeem
+     * @param shares Amount of shares to redeem
+     * @return assets Amount of assets that would be returned
+     */
+    function previewRedeem(uint256 shares) public view override returns (uint256 assets) {
+        return shares; // 1:1 ratio
+    }
+
+    /**
+     * @dev ERC4626: Preview mint
+     * @param shares Amount of shares to mint
+     * @return assets Amount of assets required
+     */
+    function previewMint(uint256 shares) public view override returns (uint256 assets) {
+        return shares; // 1:1 ratio
+    }
+
+    /**
+     * @dev ERC4626: Preview withdraw
+     * @param assets Amount of assets to withdraw
+     * @return shares Amount of shares required
+     */
+    function previewWithdraw(uint256 assets) public view override returns (uint256 shares) {
+        return assets; // 1:1 ratio
     }
 
     /**
@@ -200,7 +278,7 @@ contract TheVault is Ownable, ReentrancyGuard {
      * @param amount Amount to withdraw
      */
     function emergencyWithdraw(address token, uint256 amount) external onlyOwner {
-        IERC20(token).transfer(owner(), amount);
+        SafeERC20.safeTransfer(IERC20(token), owner(), amount);
         emit EmergencyWithdraw(token, amount);
     }
 

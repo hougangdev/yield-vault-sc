@@ -649,7 +649,7 @@ contract TheFarmTest is Test {
     function testMultipleUsersRewardAccumulation() public {
         uint256 stakeAmount1 = 1000 * 1e18;
         uint256 stakeAmount2 = 2000 * 1e18;
-        
+
         // Transfer tokens to users
         vm.startPrank(owner);
         depositToken.transfer(user1, stakeAmount1);
@@ -712,14 +712,14 @@ contract TheFarmTest is Test {
         // Update reward when no tokens are staked
         vm.roll(block.number + 10);
         theFarm.updateReward();
-        
+
         // Should not revert
         assertTrue(true);
     }
 
     function testUpdateRewardWithStakedTokens() public {
         uint256 stakeAmount = 1000 * 1e18;
-        
+
         // Transfer tokens to user1
         vm.startPrank(owner);
         depositToken.transfer(user1, stakeAmount);
@@ -734,7 +734,7 @@ contract TheFarmTest is Test {
         // Mine blocks and update reward
         vm.roll(block.number + 10);
         theFarm.updateReward();
-        
+
         // Should not revert
         assertTrue(true);
     }
@@ -746,7 +746,7 @@ contract TheFarmTest is Test {
 
     function testGetPendingRewardsAfterUpdate() public {
         uint256 stakeAmount = 1000 * 1e18;
-        
+
         // Transfer tokens to user1
         vm.startPrank(owner);
         depositToken.transfer(user1, stakeAmount);
@@ -770,7 +770,7 @@ contract TheFarmTest is Test {
         vm.startPrank(user1);
         theFarm.claimRewards();
         vm.stopPrank();
-        
+
         // Should not revert
         assertTrue(true);
     }
@@ -802,7 +802,7 @@ contract TheFarmTest is Test {
         // It will just transfer 0 tokens
         theFarm.emergencyWithdrawRewards(0);
         vm.stopPrank();
-        
+
         // Should not revert
         assertTrue(true);
     }
@@ -816,10 +816,10 @@ contract TheFarmTest is Test {
 
     function testStakeWithInsufficientAllowance() public {
         uint256 stakeAmount = 1000 * 1e18;
-        
+
         // Use a fresh user account
         address freshUser = address(0x888);
-        
+
         // Transfer tokens to freshUser but don't approve
         vm.startPrank(owner);
         depositToken.transfer(freshUser, stakeAmount);
@@ -834,10 +834,10 @@ contract TheFarmTest is Test {
 
     function testStakeWithInsufficientBalance() public {
         uint256 stakeAmount = 1000 * 1e18;
-        
+
         // Use a fresh user account that definitely has no tokens
         address freshUser = address(0x999);
-        
+
         vm.startPrank(freshUser);
         depositToken.approve(address(theFarm), stakeAmount);
         // This should revert due to insufficient balance (freshUser has 0 tokens)
@@ -848,7 +848,7 @@ contract TheFarmTest is Test {
 
     function testUnstakeWithInsufficientReceiptTokens() public {
         uint256 unstakeAmount = 1000 * 1e18;
-        
+
         vm.startPrank(user1);
         vm.expectRevert();
         theFarm.unstake(unstakeAmount);
@@ -857,7 +857,7 @@ contract TheFarmTest is Test {
 
     function testClaimRewardsWithInsufficientRewardTokens() public {
         uint256 stakeAmount = 1000 * 1e18;
-        
+
         // Transfer tokens to user1
         vm.startPrank(owner);
         depositToken.transfer(user1, stakeAmount);
@@ -904,7 +904,7 @@ contract TheFarmTest is Test {
 
     function testReceiptTokenTransfer() public {
         uint256 stakeAmount = 1000 * 1e18;
-        
+
         // Transfer tokens to user1
         vm.startPrank(owner);
         depositToken.transfer(user1, stakeAmount);
@@ -927,7 +927,7 @@ contract TheFarmTest is Test {
 
     function testReceiptTokenApproveAndTransferFrom() public {
         uint256 stakeAmount = 1000 * 1e18;
-        
+
         // Transfer tokens to user1
         vm.startPrank(owner);
         depositToken.transfer(user1, stakeAmount);
@@ -954,7 +954,7 @@ contract TheFarmTest is Test {
 
     function testReceiptTokenAllowance() public {
         uint256 stakeAmount = 1000 * 1e18;
-        
+
         // Transfer tokens to user1
         vm.startPrank(owner);
         depositToken.transfer(user1, stakeAmount);

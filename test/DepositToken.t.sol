@@ -25,10 +25,10 @@ contract DepositTokenTest is Test {
     function setUp() public {
         vm.startPrank(owner);
         depositToken = new DepositToken(TOKEN_NAME, TOKEN_SYMBOL, INITIAL_SUPPLY);
-        
+
         // Create a mock farm contract for testing
         theFarm = new DepositToken("Mock Farm", "MF", 0);
-        
+
         // Set the mock farm as authorized minter
         depositToken.setAuthorizedMinter(address(theFarm), true);
         vm.stopPrank();
@@ -183,7 +183,7 @@ contract DepositTokenTest is Test {
 
     function testTokenTransfer() public {
         uint256 transferAmount = 1000 * 1e18;
-        
+
         vm.startPrank(owner);
         depositToken.transfer(user1, transferAmount);
         vm.stopPrank();
@@ -194,7 +194,7 @@ contract DepositTokenTest is Test {
 
     function testTokenTransferWithInsufficientBalance() public {
         uint256 transferAmount = INITIAL_SUPPLY + 1;
-        
+
         vm.startPrank(owner);
         vm.expectRevert();
         depositToken.transfer(user1, transferAmount);
@@ -203,7 +203,7 @@ contract DepositTokenTest is Test {
 
     function testTokenTransferToZeroAddress() public {
         uint256 transferAmount = 1000 * 1e18;
-        
+
         vm.startPrank(owner);
         vm.expectRevert();
         depositToken.transfer(address(0), transferAmount);
@@ -221,7 +221,7 @@ contract DepositTokenTest is Test {
 
     function testTokenApprove() public {
         uint256 approveAmount = 1000 * 1e18;
-        
+
         vm.startPrank(owner);
         depositToken.approve(user1, approveAmount);
         vm.stopPrank();
@@ -239,7 +239,7 @@ contract DepositTokenTest is Test {
 
     function testTokenTransferFrom() public {
         uint256 transferAmount = 1000 * 1e18;
-        
+
         // Approve first
         vm.startPrank(owner);
         depositToken.approve(user1, transferAmount);
@@ -257,7 +257,7 @@ contract DepositTokenTest is Test {
 
     function testTokenTransferFromWithInsufficientAllowance() public {
         uint256 transferAmount = 1000 * 1e18;
-        
+
         vm.startPrank(user1);
         vm.expectRevert();
         depositToken.transferFrom(owner, user2, transferAmount);
@@ -266,7 +266,7 @@ contract DepositTokenTest is Test {
 
     function testTokenTransferFromWithInsufficientBalance() public {
         uint256 transferAmount = INITIAL_SUPPLY + 1;
-        
+
         // Approve first
         vm.startPrank(owner);
         depositToken.approve(user1, transferAmount);
@@ -280,7 +280,7 @@ contract DepositTokenTest is Test {
 
     function testTokenTransferFromZeroAddress() public {
         uint256 transferAmount = 1000 * 1e18;
-        
+
         vm.startPrank(user1);
         vm.expectRevert();
         depositToken.transferFrom(address(0), user2, transferAmount);
@@ -289,7 +289,7 @@ contract DepositTokenTest is Test {
 
     function testTokenTransferFromToZeroAddress() public {
         uint256 transferAmount = 1000 * 1e18;
-        
+
         // Approve first
         vm.startPrank(owner);
         depositToken.approve(user1, transferAmount);
@@ -352,19 +352,19 @@ contract DepositTokenTest is Test {
 
     function testMintWithInsufficientBalance() public {
         uint256 mintAmount = INITIAL_SUPPLY + 1;
-        
+
         vm.startPrank(address(theFarm));
         // This should not revert because the mint function doesn't check total supply limits
         // The DepositToken contract allows minting beyond initial supply
         depositToken.mint(user1, mintAmount);
         vm.stopPrank();
-        
+
         assertEq(depositToken.balanceOf(user1), mintAmount);
     }
 
     function testBurnWithInsufficientBalance() public {
         uint256 burnAmount = INITIAL_SUPPLY + 1;
-        
+
         vm.startPrank(address(theFarm));
         vm.expectRevert();
         depositToken.burn(user1, burnAmount);

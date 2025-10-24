@@ -14,6 +14,12 @@ import "./TheFarm.sol";
  * @notice Automatically collects rewards from TheFarm and restakes them for compound growth
  */
 contract TheVault is ERC4626, Ownable, ReentrancyGuard {
+    // Custom errors
+    error TheVault__InvalidAmount();
+    error TheVault__InsufficientRewardTokens();
+    error TheVault__InvalidRewardToken();
+    error TheVault__InvalidAddress();
+
     // TheFarm contract instance
     TheFarm public immutable theFarm;
 
@@ -112,8 +118,8 @@ contract TheVault is ERC4626, Ownable, ReentrancyGuard {
      * @param amount Amount of reward tokens to restake
      */
     function restakeRewards(uint256 amount) external onlyOwner nonReentrant {
-        require(amount > 0, "TheVault: Amount must be greater than 0");
-        require(rewardToken.balanceOf(address(this)) >= amount, "TheVault: Insufficient reward tokens");
+        if (amount == 0) revert TheVault__InvalidAmount();
+        if (rewardToken.balanceOf(address(this)) < amount) revert TheVault__InsufficientRewardTokens();
 
         _restakeRewards(amount);
     }
@@ -278,6 +284,7 @@ contract TheVault is ERC4626, Ownable, ReentrancyGuard {
      * @param amount Amount to withdraw
      */
     function emergencyWithdraw(address token, uint256 amount) external onlyOwner {
+        if (token == address(0)) revert TheVault__InvalidAddress();
         SafeERC20.safeTransfer(IERC20(token), owner(), amount);
         emit EmergencyWithdraw(token, amount);
     }
@@ -287,7 +294,7 @@ contract TheVault is ERC4626, Ownable, ReentrancyGuard {
      * @param _rewardToken New reward token address
      */
     function updateRewardToken(address _rewardToken) external onlyOwner {
-        require(_rewardToken != address(0), "TheVault: Invalid reward token");
+        if (_rewardToken == address(0)) revert TheVault__InvalidRewardToken();
         rewardToken = IERC20(_rewardToken);
     }
 }

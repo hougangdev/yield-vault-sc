@@ -12,6 +12,14 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
  * @notice Users receive receipt tokens representing their stake and earn 10 reward tokens per block
  */
 contract TheFarm is ERC20, Ownable, ReentrancyGuard {
+    // Custom errors
+    error TheFarm__InvalidRewardToken();
+    error TheFarm__InvalidAmount();
+    error TheFarm__InsufficientReceiptTokens();
+    error TheFarm__InsufficientStakedAmount();
+    error TheFarm__InsufficientRewardTokens();
+    error TheFarm__TransferFailed();
+
     // Staking token (deposit token)
     IERC20 public immutable stakingToken;
 
@@ -59,7 +67,7 @@ contract TheFarm is ERC20, Ownable, ReentrancyGuard {
      * @param _rewardToken New reward token address
      */
     function setRewardToken(address _rewardToken) external onlyOwner {
-        require(_rewardToken != address(0), "TheFarm: Invalid reward token");
+        if (_rewardToken == address(0)) revert TheFarm__InvalidRewardToken();
         address oldToken = address(rewardToken);
         rewardToken = IERC20(_rewardToken);
         emit RewardTokenUpdated(oldToken, _rewardToken);
@@ -90,7 +98,7 @@ contract TheFarm is ERC20, Ownable, ReentrancyGuard {
      * @param amount Amount of deposit tokens to stake
      */
     function stake(uint256 amount) external nonReentrant {
-        require(amount > 0, "TheFarm: Amount must be greater than 0");
+        if (amount == 0) revert TheFarm__InvalidAmount();
 
         updateReward();
 
@@ -103,7 +111,9 @@ contract TheFarm is ERC20, Ownable, ReentrancyGuard {
         }
 
         // Transfer staking tokens from user
-        stakingToken.transferFrom(msg.sender, address(this), amount);
+        if (!stakingToken.transferFrom(msg.sender, address(this), amount)) {
+            revert TheFarm__TransferFailed();
+        }
 
         // Update user info
         user.amount += amount;
@@ -123,13 +133,13 @@ contract TheFarm is ERC20, Ownable, ReentrancyGuard {
      * @param amount Amount of receipt tokens to burn (and deposit tokens to unstake)
      */
     function unstake(uint256 amount) external nonReentrant {
-        require(amount > 0, "TheFarm: Amount must be greater than 0");
-        require(balanceOf(msg.sender) >= amount, "TheFarm: Insufficient receipt tokens");
+        if (amount == 0) revert TheFarm__InvalidAmount();
+        if (balanceOf(msg.sender) < amount) revert TheFarm__InsufficientReceiptTokens();
 
         updateReward();
 
         UserInfo storage user = userInfo[msg.sender];
-        require(user.amount >= amount, "TheFarm: Insufficient staked amount");
+        if (user.amount < amount) revert TheFarm__InsufficientStakedAmount();
 
         // Calculate pending rewards
         uint256 pending = (user.amount * accRewardPerShare) / 1e18 - user.rewardDebt;
@@ -146,7 +156,9 @@ contract TheFarm is ERC20, Ownable, ReentrancyGuard {
         _burn(msg.sender, amount);
 
         // Transfer deposit tokens back to user
-        stakingToken.transfer(msg.sender, amount);
+        if (!stakingToken.transfer(msg.sender, amount)) {
+            revert TheFarm__TransferFailed();
+        }
 
         emit Unstaked(msg.sender, amount, amount);
     }
@@ -172,11 +184,13 @@ contract TheFarm is ERC20, Ownable, ReentrancyGuard {
             user.pendingRewards = 0;
 
             // Ensure contract has enough reward tokens
-            require(
-                rewardToken.balanceOf(address(this)) >= rewardAmount, "TheFarm: Insufficient reward tokens in contract"
-            );
+            if (rewardToken.balanceOf(address(this)) < rewardAmount) {
+                revert TheFarm__InsufficientRewardTokens();
+            }
 
-            rewardToken.transfer(msg.sender, rewardAmount);
+            if (!rewardToken.transfer(msg.sender, rewardAmount)) {
+                revert TheFarm__TransferFailed();
+            }
             emit RewardClaimed(msg.sender, rewardAmount);
         }
     }
@@ -205,8 +219,10 @@ contract TheFarm is ERC20, Ownable, ReentrancyGuard {
      * @param amount Amount of reward tokens to deposit
      */
     function depositRewards(uint256 amount) external {
-        require(amount > 0, "TheFarm: Amount must be greater than 0");
-        rewardToken.transferFrom(msg.sender, address(this), amount);
+        if (amount == 0) revert TheFarm__InvalidAmount();
+        if (!rewardToken.transferFrom(msg.sender, address(this), amount)) {
+            revert TheFarm__TransferFailed();
+        }
     }
 
     /**
@@ -214,6 +230,8 @@ contract TheFarm is ERC20, Ownable, ReentrancyGuard {
      * @param amount Amount of reward tokens to withdraw
      */
     function emergencyWithdrawRewards(uint256 amount) external onlyOwner {
-        rewardToken.transfer(owner(), amount);
+        if (!rewardToken.transfer(owner(), amount)) {
+            revert TheFarm__TransferFailed();
+        }
     }
 }

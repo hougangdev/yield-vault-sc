@@ -10,6 +10,12 @@ import "@openzeppelin/contracts/access/Ownable.sol";
  * @notice This token can be minted and burned by authorized contracts
  */
 contract DepositToken is ERC20, Ownable {
+    // Custom errors
+    error DepositToken__NotAuthorizedToMint();
+    error DepositToken__NotAuthorizedToBurn();
+    error DepositToken__InvalidAddress();
+    error DepositToken__InvalidAmount();
+
     // Mapping to track authorized minters/burners
     mapping(address => bool) public authorizedMinters;
 
@@ -31,6 +37,7 @@ contract DepositToken is ERC20, Ownable {
      * @param authorized True to authorize, false to revoke
      */
     function setAuthorizedMinter(address minter, bool authorized) external onlyOwner {
+        if (minter == address(0)) revert DepositToken__InvalidAddress();
         authorizedMinters[minter] = authorized;
         emit AuthorizedMinter(minter, authorized);
     }
@@ -41,7 +48,9 @@ contract DepositToken is ERC20, Ownable {
      * @param amount Amount of tokens to mint
      */
     function mint(address to, uint256 amount) external {
-        require(authorizedMinters[msg.sender], "DepositToken: Not authorized to mint");
+        if (!authorizedMinters[msg.sender]) revert DepositToken__NotAuthorizedToMint();
+        if (to == address(0)) revert DepositToken__InvalidAddress();
+        if (amount == 0) revert DepositToken__InvalidAmount();
         _mint(to, amount);
     }
 
@@ -51,7 +60,9 @@ contract DepositToken is ERC20, Ownable {
      * @param amount Amount of tokens to burn
      */
     function burn(address from, uint256 amount) external {
-        require(authorizedMinters[msg.sender], "DepositToken: Not authorized to burn");
+        if (!authorizedMinters[msg.sender]) revert DepositToken__NotAuthorizedToBurn();
+        if (from == address(0)) revert DepositToken__InvalidAddress();
+        if (amount == 0) revert DepositToken__InvalidAmount();
         _burn(from, amount);
     }
 
@@ -60,6 +71,7 @@ contract DepositToken is ERC20, Ownable {
      * @param amount Amount of tokens to burn
      */
     function burnFromSelf(uint256 amount) external {
+        if (amount == 0) revert DepositToken__InvalidAmount();
         _burn(msg.sender, amount);
     }
 }

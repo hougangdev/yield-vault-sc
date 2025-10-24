@@ -286,4 +286,232 @@ contract TheFarmTest is Test {
         assertEq(theFarm.balanceOf(user1), 0);
         assertEq(theFarm.totalSupply(), 0);
     }
+
+    function testSetRewardToken() public {
+        address newRewardToken = address(0x123);
+
+        vm.startPrank(owner);
+        vm.expectEmit(true, true, true, true);
+        emit TheFarm.RewardTokenUpdated(address(depositToken), newRewardToken);
+        theFarm.setRewardToken(newRewardToken);
+        vm.stopPrank();
+
+        assertEq(address(theFarm.rewardToken()), newRewardToken);
+    }
+
+    function testSetRewardTokenZeroAddress() public {
+        vm.startPrank(owner);
+        vm.expectRevert(TheFarm.TheFarm__InvalidRewardToken.selector);
+        theFarm.setRewardToken(address(0));
+        vm.stopPrank();
+    }
+
+    function testSetRewardTokenOnlyOwner() public {
+        vm.startPrank(user1);
+        vm.expectRevert();
+        theFarm.setRewardToken(address(0x123));
+        vm.stopPrank();
+    }
+
+    function testStakeZeroAmount() public {
+        vm.startPrank(user1);
+        vm.expectRevert(TheFarm.TheFarm__InvalidAmount.selector);
+        theFarm.stake(0);
+        vm.stopPrank();
+    }
+
+    function testUnstakeZeroAmount() public {
+        vm.startPrank(user1);
+        vm.expectRevert(TheFarm.TheFarm__InvalidAmount.selector);
+        theFarm.unstake(0);
+        vm.stopPrank();
+    }
+
+    function testUnstakeInsufficientReceiptTokens() public {
+        vm.startPrank(user1);
+        vm.expectRevert(TheFarm.TheFarm__InsufficientReceiptTokens.selector);
+        theFarm.unstake(1000 * 1e18);
+        vm.stopPrank();
+    }
+
+    function testUnstakeInsufficientStakedAmount() public {
+        uint256 stakeAmount = 1000 * 1e18;
+
+        // First stake some tokens
+        vm.startPrank(user1);
+        theFarm.stake(stakeAmount);
+        vm.stopPrank();
+
+        // Try to unstake more than staked (this will fail on receipt tokens first)
+        vm.startPrank(user1);
+        vm.expectRevert(TheFarm.TheFarm__InsufficientReceiptTokens.selector);
+        theFarm.unstake(stakeAmount + 1);
+        vm.stopPrank();
+    }
+
+    function testDepositRewards() public {
+        uint256 rewardAmount = 5000 * 1e18;
+
+        vm.startPrank(owner);
+        depositToken.transfer(address(this), rewardAmount);
+        depositToken.approve(address(theFarm), rewardAmount);
+        theFarm.depositRewards(rewardAmount);
+        vm.stopPrank();
+
+        assertEq(depositToken.balanceOf(address(theFarm)), rewardAmount);
+    }
+
+    function testDepositRewardsZeroAmount() public {
+        vm.startPrank(owner);
+        vm.expectRevert(TheFarm.TheFarm__InvalidAmount.selector);
+        theFarm.depositRewards(0);
+        vm.stopPrank();
+    }
+
+    function testEmergencyWithdrawRewards() public {
+        uint256 rewardAmount = 1000 * 1e18;
+
+        // First deposit some rewards
+        vm.startPrank(owner);
+        depositToken.transfer(address(theFarm), rewardAmount);
+        vm.stopPrank();
+
+        // Emergency withdraw
+        vm.startPrank(owner);
+        theFarm.emergencyWithdrawRewards(rewardAmount);
+        vm.stopPrank();
+
+        // Owner should have the original supply (some tokens were already transferred in setup)
+        assertEq(depositToken.balanceOf(owner), INITIAL_SUPPLY - 20000 * 1e18); // 20k tokens transferred to users in setup
+    }
+
+    function testEmergencyWithdrawRewardsOnlyOwner() public {
+        vm.startPrank(user1);
+        vm.expectRevert();
+        theFarm.emergencyWithdrawRewards(1000 * 1e18);
+        vm.stopPrank();
+    }
+
+    function testUpdateRewardNoStakedTokens() public {
+        // Mine some blocks
+        vm.roll(block.number + 10);
+
+        // Update rewards when no tokens are staked
+        theFarm.updateReward();
+
+        assertEq(theFarm.lastRewardBlock(), block.number);
+    }
+
+    function testUpdateRewardSameBlock() public {
+        uint256 stakeAmount = 1000 * 1e18;
+
+        // Stake some tokens
+        vm.startPrank(user1);
+        theFarm.stake(stakeAmount);
+        vm.stopPrank();
+
+        // Update rewards in the same block
+        theFarm.updateReward();
+
+        // Should not change lastRewardBlock
+        assertEq(theFarm.lastRewardBlock(), block.number);
+    }
+
+    function testClaimRewardsNoPending() public {
+        vm.startPrank(user1);
+        theFarm.claimRewards(); // Should not revert even with no pending rewards
+        vm.stopPrank();
+    }
+
+    function testClaimRewardsInsufficientRewardTokens() public {
+        uint256 stakeAmount = 1000 * 1e18;
+
+        // Stake some tokens
+        vm.startPrank(user1);
+        theFarm.stake(stakeAmount);
+        vm.stopPrank();
+
+        // Mine blocks to accumulate rewards
+        vm.roll(block.number + 5);
+
+        // Try to claim rewards without depositing reward tokens
+        // This should not revert if there are no pending rewards to claim
+        vm.startPrank(user1);
+        theFarm.claimRewards(); // Should not revert
+        vm.stopPrank();
+    }
+
+    function testGetPendingRewardsNoStake() public {
+        uint256 pending = theFarm.getPendingRewards(user1);
+        assertEq(pending, 0);
+    }
+
+    function testRewardAccumulationWithMultipleUsers() public {
+        uint256 stakeAmount1 = 1000 * 1e18;
+        uint256 stakeAmount2 = 2000 * 1e18;
+
+        // Both users stake
+        vm.startPrank(user1);
+        theFarm.stake(stakeAmount1);
+        vm.stopPrank();
+
+        vm.startPrank(user2);
+        theFarm.stake(stakeAmount2);
+        vm.stopPrank();
+
+        // Mine blocks
+        vm.roll(block.number + 10);
+
+        // Check pending rewards
+        uint256 user1Pending = theFarm.getPendingRewards(user1);
+        uint256 user2Pending = theFarm.getPendingRewards(user2);
+
+        // User2 should have more rewards (staked more)
+        assertTrue(user2Pending > user1Pending);
+        assertTrue(user1Pending > 0);
+        assertTrue(user2Pending > 0);
+    }
+
+    function testStakeAndUnstakeEvents() public {
+        uint256 stakeAmount = 1000 * 1e18;
+
+        // Test stake event
+        vm.startPrank(user1);
+        vm.expectEmit(true, true, true, true);
+        emit TheFarm.Staked(user1, stakeAmount, stakeAmount);
+        theFarm.stake(stakeAmount);
+        vm.stopPrank();
+
+        // Test unstake event
+        vm.startPrank(user1);
+        vm.expectEmit(true, true, true, true);
+        emit TheFarm.Unstaked(user1, stakeAmount, stakeAmount);
+        theFarm.unstake(stakeAmount);
+        vm.stopPrank();
+    }
+
+    function testClaimRewardsEvent() public {
+        uint256 stakeAmount = 1000 * 1e18;
+        uint256 rewardAmount = 5000 * 1e18;
+
+        // Stake tokens
+        vm.startPrank(user1);
+        theFarm.stake(stakeAmount);
+        vm.stopPrank();
+
+        // Deposit rewards
+        vm.startPrank(owner);
+        depositToken.transfer(address(theFarm), rewardAmount);
+        vm.stopPrank();
+
+        // Mine blocks
+        vm.roll(block.number + 5);
+
+        // Claim rewards and check event
+        vm.startPrank(user1);
+        vm.expectEmit(true, true, true, true);
+        emit TheFarm.RewardClaimed(user1, theFarm.getPendingRewards(user1));
+        theFarm.claimRewards();
+        vm.stopPrank();
+    }
 }

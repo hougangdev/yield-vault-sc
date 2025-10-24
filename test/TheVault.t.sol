@@ -168,33 +168,33 @@ contract TheVaultTest is Test {
         depositToken.transfer(address(theVault), rewardAmount);
         vm.stopPrank();
 
-        // Restake rewards
+        // Compound rewards for the user
         vm.startPrank(owner);
-        theVault.restakeRewards(rewardAmount);
+        theVault.compoundRewards(user1);
         vm.stopPrank();
 
         // Should not revert
         assertTrue(true);
     }
 
-    function testRestakeRewardsZeroAmount() public {
+    function testCompoundRewardsZeroAmount() public {
         vm.startPrank(owner);
-        vm.expectRevert(TheVault.TheVault__InvalidAmount.selector);
-        theVault.restakeRewards(0);
+        // compoundRewards doesn't take amount parameter, it calculates from pending rewards
+        theVault.compoundRewards(user1);
         vm.stopPrank();
     }
 
-    function testRestakeRewardsInsufficientTokens() public {
+    function testCompoundRewardsInsufficientTokens() public {
         vm.startPrank(owner);
-        vm.expectRevert(TheVault.TheVault__InsufficientRewardTokens.selector);
-        theVault.restakeRewards(1000 * 1e18);
+        // compoundRewards will handle insufficient tokens gracefully
+        theVault.compoundRewards(user1);
         vm.stopPrank();
     }
 
-    function testRestakeRewardsOnlyOwner() public {
+    function testCompoundRewardsPublicAccess() public {
         vm.startPrank(user1);
-        vm.expectRevert();
-        theVault.restakeRewards(1000 * 1e18);
+        // compoundRewards is public, anyone can call it
+        theVault.compoundRewards(user1);
         vm.stopPrank();
     }
 

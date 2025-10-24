@@ -10,42 +10,61 @@ import "./TheFarm.sol";
 
 /**
  * @title TheVault
- * @dev ERC4626 compliant vault that collects staking reward tokens for users and restakes to staking contract
+ * @dev ERC4626 compliant auto-compound yield optimizer vault
  * @notice Automatically collects rewards from TheFarm and restakes them for compound growth
  */
 contract TheVault is ERC4626, Ownable, ReentrancyGuard {
-    // Custom errors
+    using SafeERC20 for IERC20;
+
+    /*//////////////////////////////////////////////////////////////
+                                 ERRORS
+    //////////////////////////////////////////////////////////////*/
     error TheVault__InvalidAmount();
-    error TheVault__InsufficientRewardTokens();
     error TheVault__InvalidRewardToken();
     error TheVault__InvalidAddress();
 
-    // TheFarm contract instance
+    /*//////////////////////////////////////////////////////////////
+                                 STATE VARIABLES
+    //////////////////////////////////////////////////////////////*/
     TheFarm public immutable theFarm;
-
-    // Reward token from TheFarm
     IERC20 public rewardToken;
-
-    // Total reward tokens collected and restaked
+    IERC20 public immutable stakingToken;
     uint256 public totalRewardsCollected;
-
-    // Auto-restake threshold (minimum reward tokens to trigger restaking)
     uint256 public autoRestakeThreshold = 100 * 1e18; // 100 tokens
+    uint256 public performanceFee = 100; // 1% default
+    uint256 public constant MAX_PERFORMANCE_FEE = 1000; // 10% max
+    address public feeRecipient;
 
-    // Events
+    /*//////////////////////////////////////////////////////////////
+                                 EVENTS
+    //////////////////////////////////////////////////////////////*/
     event RewardsCollected(uint256 amount);
-    event RewardsRestaked(uint256 amount);
     event AutoRestakeThresholdUpdated(uint256 oldThreshold, uint256 newThreshold);
-    event EmergencyWithdraw(address indexed token, uint256 amount);
+    event PerformanceFeeUpdated(uint256 oldFee, uint256 newFee);
+    event FeeRecipientUpdated(address oldRecipient, address newRecipient);
+    event EmergencyWithdraw(address token, uint256 amount);
+    event CompoundRewards(address user, uint256 rewardAmount, uint256 feeAmount);
 
+    /*//////////////////////////////////////////////////////////////
+                                 CONSTRUCTOR
+    //////////////////////////////////////////////////////////////*/
     constructor(address _theFarm, address _asset, string memory name, string memory symbol)
         ERC4626(IERC20(_asset))
         ERC20(name, symbol)
         Ownable(msg.sender)
     {
+        if (_theFarm == address(0)) revert TheVault__InvalidAddress();
+        if (_asset == address(0)) revert TheVault__InvalidAddress();
+
         theFarm = TheFarm(_theFarm);
         rewardToken = theFarm.rewardToken();
+        stakingToken = IERC20(_asset);
+        feeRecipient = msg.sender;
     }
+
+    /*//////////////////////////////////////////////////////////////
+                                 FUNCTIONS
+    //////////////////////////////////////////////////////////////*/
 
     /**
      * @dev Update auto-restake threshold (only owner)
@@ -58,89 +77,100 @@ contract TheVault is ERC4626, Ownable, ReentrancyGuard {
     }
 
     /**
-     * @dev Collect rewards from TheFarm for a specific user
-     * @param user User address to collect rewards for
+     * @dev Update performance fee (only owner)
+     * @param _fee New fee in basis points (e.g., 100 = 1%)
      */
-    function collectUserRewards(address user) external nonReentrant {
-        // Get pending rewards for the user
+    function setPerformanceFee(uint256 _fee) external onlyOwner {
+        if (_fee > MAX_PERFORMANCE_FEE) revert TheVault__InvalidAmount();
+        uint256 oldFee = performanceFee;
+        performanceFee = _fee;
+        emit PerformanceFeeUpdated(oldFee, _fee);
+    }
+
+    /**
+     * @dev Update fee recipient (only owner)
+     * @param _feeRecipient New fee recipient address
+     */
+    function setFeeRecipient(address _feeRecipient) external onlyOwner {
+        if (_feeRecipient == address(0)) revert TheVault__InvalidAddress();
+        address oldRecipient = feeRecipient;
+        feeRecipient = _feeRecipient;
+        emit FeeRecipientUpdated(oldRecipient, _feeRecipient);
+    }
+
+    /**
+     * @dev Auto-compound rewards for a user (anyone can call this)
+     * @param user User address to compound rewards for
+     */
+    function compoundRewards(address user) external nonReentrant {
+        // Get pending rewards for the user from TheFarm
         uint256 pendingRewards = theFarm.getPendingRewards(user);
 
         if (pendingRewards > 0) {
-            // Claim rewards on behalf of the user
-            // Note: This requires the user to have approved this contract to claim on their behalf
-            // or the user needs to call claimRewards() first
+            // Claim rewards from TheFarm (this will transfer rewards to this contract)
+            // Note: This requires the user to have approved this contract or called claimRewards first
+            // For auto-compounding, we'll assume rewards are already available
 
-            // For now, we'll assume the user has already claimed or we have permission
-            // In a production environment, you might need a different approach
+            // Calculate fee
+            uint256 feeAmount = (pendingRewards * performanceFee) / 10000;
+            uint256 rewardAfterFee = pendingRewards - feeAmount;
 
-            // Mint vault shares to the user based on collected rewards
-            _mint(user, pendingRewards);
+            // Transfer fee to fee recipient
+            if (feeAmount > 0) {
+                rewardToken.safeTransfer(feeRecipient, feeAmount);
+            }
 
-            totalRewardsCollected += pendingRewards;
-            emit RewardsCollected(pendingRewards);
+            // Convert reward tokens to staking tokens (assuming 1:1 ratio for simplicity)
+            // In a real implementation, you would use a DEX to swap reward tokens for staking tokens
+            // For now, we'll assume the reward tokens can be directly staked
 
-            // Auto-restake if threshold is met
-            if (pendingRewards >= autoRestakeThreshold) {
-                _restakeRewards(pendingRewards);
+            // Restake the rewards
+            if (rewardAfterFee > 0) {
+                rewardToken.approve(address(theFarm), rewardAfterFee);
+                theFarm.stake(rewardAfterFee);
+
+                // Mint additional vault shares to the user
+                _mint(user, rewardAfterFee);
+
+                totalRewardsCollected += rewardAfterFee;
+                emit CompoundRewards(user, pendingRewards, feeAmount);
             }
         }
     }
 
     /**
-     * @dev Collect and restake rewards for multiple users
+     * @dev Auto-compound rewards for multiple users
      * @param users Array of user addresses
      */
-    function collectMultipleUserRewards(address[] calldata users) external nonReentrant {
-        uint256 totalCollected = 0;
+    function compoundMultipleRewards(address[] calldata users) external nonReentrant {
+        uint256 totalCompounded = 0;
+        uint256 totalFees = 0;
 
         for (uint256 i = 0; i < users.length; i++) {
             uint256 pendingRewards = theFarm.getPendingRewards(users[i]);
 
             if (pendingRewards > 0) {
-                _mint(users[i], pendingRewards);
-                totalCollected += pendingRewards;
+                uint256 feeAmount = (pendingRewards * performanceFee) / 10000;
+                uint256 rewardAfterFee = pendingRewards - feeAmount;
+
+                if (feeAmount > 0) {
+                    rewardToken.safeTransfer(feeRecipient, feeAmount);
+                    totalFees += feeAmount;
+                }
+
+                if (rewardAfterFee > 0) {
+                    rewardToken.approve(address(theFarm), rewardAfterFee);
+                    theFarm.stake(rewardAfterFee);
+                    _mint(users[i], rewardAfterFee);
+                    totalCompounded += rewardAfterFee;
+                }
             }
         }
 
-        if (totalCollected > 0) {
-            totalRewardsCollected += totalCollected;
-            emit RewardsCollected(totalCollected);
-
-            // Auto-restake if threshold is met
-            if (totalCollected >= autoRestakeThreshold) {
-                _restakeRewards(totalCollected);
-            }
+        if (totalCompounded > 0) {
+            totalRewardsCollected += totalCompounded;
+            emit RewardsCollected(totalCompounded);
         }
-    }
-
-    /**
-     * @dev Manually restake collected reward tokens
-     * @param amount Amount of reward tokens to restake
-     */
-    function restakeRewards(uint256 amount) external onlyOwner nonReentrant {
-        if (amount == 0) revert TheVault__InvalidAmount();
-        if (rewardToken.balanceOf(address(this)) < amount) revert TheVault__InsufficientRewardTokens();
-
-        _restakeRewards(amount);
-    }
-
-    /**
-     * @dev Internal function to restake reward tokens
-     * @param amount Amount of reward tokens to restake
-     */
-    function _restakeRewards(uint256 amount) internal {
-        // Convert reward tokens to deposit tokens (assuming 1:1 ratio or using a swap mechanism)
-        // For simplicity, we'll assume the reward tokens can be directly staked
-        // In a real implementation, you might need to swap reward tokens for deposit tokens
-
-        // Approve TheFarm to spend reward tokens
-        rewardToken.approve(address(theFarm), amount);
-
-        // Stake the reward tokens in TheFarm
-        // Note: This assumes TheFarm accepts reward tokens as staking tokens
-        // You might need to implement a swap mechanism here
-
-        emit RewardsRestaked(amount);
     }
 
     /**
@@ -213,7 +243,7 @@ contract TheVault is ERC4626, Ownable, ReentrancyGuard {
      * @param assets Amount of assets
      * @return shares Amount of shares
      */
-    function convertToShares(uint256 assets) public view override returns (uint256 shares) {
+    function convertToShares(uint256 assets) public pure override returns (uint256 shares) {
         return assets; // 1:1 ratio
     }
 
@@ -222,7 +252,7 @@ contract TheVault is ERC4626, Ownable, ReentrancyGuard {
      * @param shares Amount of shares
      * @return assets Amount of assets
      */
-    function convertToAssets(uint256 shares) public view override returns (uint256 assets) {
+    function convertToAssets(uint256 shares) public pure override returns (uint256 assets) {
         return shares; // 1:1 ratio
     }
 
@@ -231,7 +261,7 @@ contract TheVault is ERC4626, Ownable, ReentrancyGuard {
      * @param assets Amount of assets to deposit
      * @return shares Amount of shares that would be minted
      */
-    function previewDeposit(uint256 assets) public view override returns (uint256 shares) {
+    function previewDeposit(uint256 assets) public pure override returns (uint256 shares) {
         return assets; // 1:1 ratio
     }
 
@@ -240,7 +270,7 @@ contract TheVault is ERC4626, Ownable, ReentrancyGuard {
      * @param shares Amount of shares to redeem
      * @return assets Amount of assets that would be returned
      */
-    function previewRedeem(uint256 shares) public view override returns (uint256 assets) {
+    function previewRedeem(uint256 shares) public pure override returns (uint256 assets) {
         return shares; // 1:1 ratio
     }
 
@@ -249,7 +279,7 @@ contract TheVault is ERC4626, Ownable, ReentrancyGuard {
      * @param shares Amount of shares to mint
      * @return assets Amount of assets required
      */
-    function previewMint(uint256 shares) public view override returns (uint256 assets) {
+    function previewMint(uint256 shares) public pure override returns (uint256 assets) {
         return shares; // 1:1 ratio
     }
 
@@ -258,7 +288,7 @@ contract TheVault is ERC4626, Ownable, ReentrancyGuard {
      * @param assets Amount of assets to withdraw
      * @return shares Amount of shares required
      */
-    function previewWithdraw(uint256 assets) public view override returns (uint256 shares) {
+    function previewWithdraw(uint256 assets) public pure override returns (uint256 shares) {
         return assets; // 1:1 ratio
     }
 
@@ -276,6 +306,14 @@ contract TheVault is ERC4626, Ownable, ReentrancyGuard {
      */
     function getRewardTokenBalance() external view returns (uint256) {
         return rewardToken.balanceOf(address(this));
+    }
+
+    /**
+     * @dev Get vault's balance of staking tokens
+     * @return Balance of staking tokens
+     */
+    function getStakingTokenBalance() external view returns (uint256) {
+        return stakingToken.balanceOf(address(this));
     }
 
     /**

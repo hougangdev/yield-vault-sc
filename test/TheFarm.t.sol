@@ -96,9 +96,12 @@ contract TheFarmTest is Test {
         assertEq(theFarm.totalStaked(), stakeAmount);
 
         // Check user info
-        (uint256 amount, uint256 rewardDebt, uint256 pendingRewards) = theFarm.userInfo(user1);
+        (uint256 amount, uint256 rewardDebt) = theFarm.userInfo(user1);
         assertEq(amount, stakeAmount);
         assertEq(rewardDebt, 0); // Should be 0 initially
+
+        // Check pending rewards separately
+        uint256 pendingRewards = theFarm.getPendingRewards(user1);
         assertEq(pendingRewards, 0);
     }
 

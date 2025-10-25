@@ -41,8 +41,8 @@ contract TheVault is ERC4626, Ownable, ReentrancyGuard {
     // Auto-compounding / keeper config
     bool public autoCompoundEnabled = true;
     uint256 public lastAutoCompoundBlock;
-    uint256 public autoCompoundInterval = 5; // blocks (~1 minute for demo)
-    uint256 public minCompoundAmount = 1 * 1e18; // tokens (wei) - reduced for demo
+    uint256 public autoCompoundInterval = 100; // blocks (~1 minute for demo)
+    uint256 public minCompoundAmount = 10 * 1e18; // tokens (wei) - reduced for demo
     uint256 public maxCompoundGasPrice = 50 * 1e9; // 50 gwei
 
     mapping(address => bool) public authorizedKeepers;

@@ -24,6 +24,7 @@ contract TheVault is ERC4626, Ownable, ReentrancyGuard {
     error TheVault__InvalidAmount();
     error TheVault__InvalidRewardToken();
     error TheVault__InvalidAddress();
+    error TheVault__InsufficientFarmBalance();
 
     /*//////////////////////////////////////////////////////////////
                                  STATE
@@ -208,8 +209,42 @@ contract TheVault is ERC4626, Ownable, ReentrancyGuard {
     {
         // Only unstake if there are assets to unstake
         if (assets > 0) {
-            // Unstake before withdrawing
-            theFarm.unstake(assets);
+            // Get vault's current asset balance
+            uint256 vaultBalance = IERC20(asset()).balanceOf(address(this));
+
+            // Calculate how much we need to unstake from the farm
+            uint256 assetsNeeded = assets > vaultBalance ? assets - vaultBalance : 0;
+
+            if (assetsNeeded > 0) {
+                // Claim any pending rewards first to maximize available assets
+                try theFarm.claimRewards() {} catch {}
+
+                // Re-check vault balance after claiming rewards
+                vaultBalance = IERC20(asset()).balanceOf(address(this));
+
+                // Recalculate assets needed
+                assetsNeeded = assets > vaultBalance ? assets - vaultBalance : 0;
+
+                if (assetsNeeded > 0) {
+                    // Unstake by burning receipt tokens (theFarm.balanceOf(this) are receipt tokens)
+                    // The vault's receipt token balance represents how much it has staked
+                    uint256 receiptBalance = theFarm.balanceOf(address(this));
+
+                    if (receiptBalance > 0) {
+                        // Unstake the minimum of what we need and what we have
+                        uint256 toUnstake = assetsNeeded > receiptBalance ? receiptBalance : assetsNeeded;
+
+                        // CRITICAL: Check if farm has enough staking tokens to honor unstake
+                        uint256 farmBalance = theFarm.getStakingTokenBalance();
+                        if (farmBalance < toUnstake) {
+                            revert TheVault__InsufficientFarmBalance();
+                        }
+
+                        // Burn receipt tokens to unstake
+                        theFarm.unstake(toUnstake);
+                    }
+                }
+            }
 
             // Check and trigger auto-compounding
             _checkAndTriggerAutoCompound();
@@ -301,9 +336,12 @@ contract TheVault is ERC4626, Ownable, ReentrancyGuard {
         if (block.number < lastAutoCompoundBlock + autoCompoundInterval) return (false, "Interval not reached");
         if (maxCompoundGasPrice > 0 && tx.gasprice > maxCompoundGasPrice) return (false, "Gas price too high");
 
-        // simulate post-harvest balance by reading current; keeper can call even if 0 then skip
+        // Check both current balance AND pending rewards in TheFarm
         uint256 bal = rewardToken.balanceOf(address(this));
-        if (bal < minCompoundAmount) return (false, "Insufficient rewards");
+        uint256 pending = theFarm.getPendingRewards(address(this));
+        uint256 total = bal + pending;
+
+        if (total < minCompoundAmount) return (false, "Insufficient rewards");
 
         return (true, "Ready to execute");
     }
@@ -316,9 +354,13 @@ contract TheVault is ERC4626, Ownable, ReentrancyGuard {
         if (block.number < lastAutoCompoundBlock + autoCompoundInterval) return;
         if (maxCompoundGasPrice > 0 && tx.gasprice > maxCompoundGasPrice) return;
 
-        // Note: harvest can be expensive; we only attempt if current balance >= min threshold
-        // (You could also attempt to harvest here, but that affects UX; keeping it conservative.)
-        if (rewardToken.balanceOf(address(this)) < minCompoundAmount) return;
+        // Check both current balance AND pending rewards in TheFarm
+        uint256 bal = rewardToken.balanceOf(address(this));
+        uint256 pending = theFarm.getPendingRewards(address(this));
+        uint256 total = bal + pending;
+
+        // Only attempt if total rewards (current + pending) >= min threshold
+        if (total < minCompoundAmount) return;
 
         // do not pay keeper on internal triggers
         _compoundCore(false);
@@ -365,5 +407,12 @@ contract TheVault is ERC4626, Ownable, ReentrancyGuard {
 
     function getStakingTokenBalance() external view returns (uint256) {
         return stakingToken.balanceOf(address(this));
+    }
+
+    /**
+     * @dev Get pending rewards in TheFarm for the vault
+     */
+    function getPendingRewardsInFarm() external view returns (uint256) {
+        return theFarm.getPendingRewards(address(this));
     }
 }

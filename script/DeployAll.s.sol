@@ -30,7 +30,6 @@ contract DeployAll is Script {
     string constant VAULT_SYMBOL = "YVT";
 
     // Security and fee parameters
-    uint256 constant DEFAULT_AUTO_RESTAKE_THRESHOLD = 100 * 1e18; // 100 tokens
     uint256 constant DEFAULT_PERFORMANCE_FEE = 100; // 1% in basis points
     uint256 constant MAX_PERFORMANCE_FEE = 1000; // 10% max in basis points
 
@@ -39,6 +38,10 @@ contract DeployAll is Script {
     uint256 constant DEFAULT_AUTO_COMPOUND_INTERVAL = 100; // 100 blocks (~20 minutes)
     uint256 constant DEFAULT_MIN_COMPOUND_AMOUNT = 10 * 1e18; // 10 tokens
     uint256 constant DEFAULT_MAX_GAS_PRICE = 50 * 1e9; // 50 gwei
+
+    // Keeper parameters
+    uint256 constant DEFAULT_KEEPER_REWARD = 0.001 ether; // 0.001 ETH
+    uint256 constant INITIAL_ETH_DEPOSIT = 0.01 ether; // 0.01 ETH for keeper rewards
 
     function run() external {
         uint256 deployerPrivateKey = uint256(vm.envBytes32("PRIVATE_KEY"));
@@ -67,15 +70,11 @@ contract DeployAll is Script {
         console.log("  - Initial Supply:", depositToken.totalSupply() / 1e18, "tokens");
         console.log("  - Owner:", depositToken.owner());
 
-        // For this example, we'll use DepositToken as the reward token too
-        // In production, you might want to use a different reward token
-        address rewardToken = address(depositToken);
-
-        // Deploy TheFarm
+        // Deploy TheFarm with DepositToken as both staking and reward token
         console.log("\n2. Deploying TheFarm...");
         theFarm = new TheFarm(
             address(depositToken), // staking token
-            rewardToken, // reward token
+            address(depositToken), // reward token (same as staking for auto-compound)
             RECEIPT_TOKEN_NAME,
             RECEIPT_TOKEN_SYMBOL
         );
@@ -96,9 +95,9 @@ contract DeployAll is Script {
         // Configure TheVault with security and auto-compounding parameters
         console.log("\n4. Configuring TheVault parameters...");
 
-        // Set auto-restake threshold
-        theVault.setAutoRestakeThreshold(DEFAULT_AUTO_RESTAKE_THRESHOLD);
-        console.log("[SUCCESS] Auto-restake threshold set to:", DEFAULT_AUTO_RESTAKE_THRESHOLD / 1e18, "tokens");
+        // Set minimum compound amount
+        theVault.setMinCompoundAmount(DEFAULT_MIN_COMPOUND_AMOUNT);
+        console.log("[SUCCESS] Minimum compound amount set to:", DEFAULT_MIN_COMPOUND_AMOUNT / 1e18, "tokens");
 
         // Set performance fee
         theVault.setPerformanceFee(DEFAULT_PERFORMANCE_FEE);
@@ -121,36 +120,51 @@ contract DeployAll is Script {
         console.log("[SUCCESS] Auto-compound interval set to:", DEFAULT_AUTO_COMPOUND_INTERVAL, "blocks");
         console.log("  Estimated time:", (DEFAULT_AUTO_COMPOUND_INTERVAL * 12) / 60, "minutes (assuming 12s blocks)");
 
-        // Set minimum compound amount
-        theVault.setMinCompoundAmount(DEFAULT_MIN_COMPOUND_AMOUNT);
-        console.log("[SUCCESS] Minimum compound amount set to:", DEFAULT_MIN_COMPOUND_AMOUNT / 1e18, "tokens");
+        // Set minimum compound amount (already set above, but logging for clarity)
+        console.log("[SUCCESS] Minimum compound amount:", theVault.minCompoundAmount() / 1e18, "tokens");
 
         // Set maximum gas price
         theVault.setMaxGasPrice(DEFAULT_MAX_GAS_PRICE);
         console.log("[SUCCESS] Maximum gas price set to:", DEFAULT_MAX_GAS_PRICE / 1e9, "gwei");
 
-        // Authorize TheFarm to mint/burn DepositTokens
-        console.log("\n6. Setting up authorization...");
-        depositToken.setAuthorizedMinter(address(theFarm), true);
-        console.log("[SUCCESS] TheFarm authorized to mint/burn DepositTokens");
-        console.log("  - Authorized:", depositToken.authorizedMinters(address(theFarm)));
+        // Configure keeper system
+        console.log("\n6. Configuring keeper system...");
+
+        // Set keeper reward
+        theVault.setKeeperReward(DEFAULT_KEEPER_REWARD);
+        console.log("[SUCCESS] Keeper reward set to:", DEFAULT_KEEPER_REWARD / 1e15, "milliETH");
+
+        // Authorize deployer as initial keeper
+        theVault.setKeeperAuthorization(deployer, true);
+        console.log("[SUCCESS] Deployer authorized as keeper:", deployer);
+
+        // Deposit initial ETH for keeper rewards
+        theVault.depositETH{value: INITIAL_ETH_DEPOSIT}();
+        console.log("[SUCCESS] Initial ETH deposited:", INITIAL_ETH_DEPOSIT / 1e15, "milliETH");
+        console.log("  Vault ETH balance:", address(theVault).balance / 1e15, "milliETH");
+
+        // Note: TheFarm doesn't need minting authorization as it doesn't mint DepositTokens
+        // TheFarm only handles staking/unstaking of existing tokens
+        console.log("\n7. System setup complete...");
+        console.log("[SUCCESS] All contracts deployed and configured");
+        console.log("[INFO] TheFarm uses existing DepositTokens (no minting required)");
 
         vm.stopBroadcast();
 
         // Comprehensive deployment verification
         console.log("\n=== DEPLOYMENT VERIFICATION ===");
-        _verifyDeployment();
+        _verifyDeployment(deployer);
 
         // Security configuration summary
         console.log("\n=== SECURITY CONFIGURATION ===");
-        _logSecurityConfig();
+        _logSecurityConfig(deployer);
 
         // Final summary
         console.log("\n=== DEPLOYMENT COMPLETE ===");
         console.log("[SUCCESS] All contracts deployed successfully");
         console.log("[SUCCESS] Security parameters configured");
         console.log("[SUCCESS] Auto-compounding parameters configured");
-        console.log("[SUCCESS] Authorization set up");
+        console.log("[SUCCESS] Keeper system configured");
         console.log("[SUCCESS] Yield optimizer vault ready for use");
 
         console.log("\nContract Addresses:");
@@ -167,18 +181,28 @@ contract DeployAll is Script {
         console.log("  4. Call vault.redeem(shares, receiver, owner) to withdraw");
         console.log("\nFor Monitoring:");
         console.log("  - Check auto-compound status: vault.getAutoCompoundStatus()");
-        console.log("  - Monitor events: AutoCompoundExecuted, CompoundRewards");
-        console.log("  - Manual trigger: vault.executeAutoCompound()");
+        console.log("  - Monitor events: AutoCompoundExecuted, RewardsCollected");
+        console.log("  - Manual trigger: vault.executeAutoCompound() (keepers only)");
+        console.log("  - Emergency trigger: vault.emergencyAutoCompound() (anyone)");
+        console.log("\nFor Keepers:");
+        console.log("  - Check if ready: vault.shouldExecuteAutoCompound()");
+        console.log("  - Execute: vault.executeAutoCompound() (earns reward)");
+        console.log("  - Fund vault: vault.depositETH()");
         console.log("\nFor Governance:");
         console.log("  - Adjust parameters: setAutoCompoundInterval(), setMinCompoundAmount()");
         console.log("  - Control fees: setPerformanceFee(), setFeeRecipient()");
+        console.log("  - Manage keepers: setKeeperAuthorization(), setKeeperReward()");
         console.log("  - Emergency: setAutoCompoundEnabled(false)");
+        console.log("\nFor Rewards Distribution:");
+        console.log("  - Deposit rewards: theFarm.depositRewards(amount)");
+        console.log("  - Check farm balance: theFarm.getRewardTokenBalance()");
+        console.log("  - Monitor farm events: RewardsDeposited, RewardsUpdated");
     }
 
     /**
      * @dev Verify that all contracts are properly deployed and configured
      */
-    function _verifyDeployment() internal view {
+    function _verifyDeployment(address deployer) internal view {
         // Verify DepositToken
         require(address(depositToken) != address(0), "DepositToken not deployed");
         require(depositToken.totalSupply() == INITIAL_SUPPLY, "Invalid DepositToken supply");
@@ -202,8 +226,10 @@ contract DeployAll is Script {
         require(theVault.minCompoundAmount() == DEFAULT_MIN_COMPOUND_AMOUNT, "Invalid min compound amount");
         require(theVault.maxCompoundGasPrice() == DEFAULT_MAX_GAS_PRICE, "Invalid max gas price");
 
-        // Verify authorization
-        require(depositToken.authorizedMinters(address(theFarm)), "TheFarm not authorized");
+        // Verify keeper configuration
+        require(theVault.keeperReward() == DEFAULT_KEEPER_REWARD, "Invalid keeper reward");
+        require(theVault.authorizedKeepers(deployer), "Deployer not authorized as keeper");
+        require(address(theVault).balance >= INITIAL_ETH_DEPOSIT, "Insufficient ETH for keeper rewards");
 
         console.log("[SUCCESS] All contracts verified successfully");
     }
@@ -211,7 +237,7 @@ contract DeployAll is Script {
     /**
      * @dev Log the security configuration for transparency
      */
-    function _logSecurityConfig() internal view {
+    function _logSecurityConfig(address deployer) internal view {
         console.log("Security Features Enabled:");
         console.log("  [ENABLED] SafeERC20 operations throughout");
         console.log("  [ENABLED] Reentrancy protection");
@@ -221,7 +247,7 @@ contract DeployAll is Script {
         console.log("  [ENABLED] Event indexing for off-chain monitoring");
 
         console.log("\nVault Configuration:");
-        console.log("  - Auto-restake threshold:", theVault.autoRestakeThreshold() / 1e18, "tokens");
+        console.log("  - Minimum compound amount:", theVault.minCompoundAmount() / 1e18, "tokens");
         console.log("  - Performance fee:", theVault.performanceFee(), "basis points");
         console.log("  - Max performance fee:", theVault.MAX_PERFORMANCE_FEE(), "basis points");
         console.log("  - Fee recipient:", theVault.feeRecipient());
@@ -234,10 +260,17 @@ contract DeployAll is Script {
         console.log("  - Last compound block:", theVault.lastAutoCompoundBlock());
         console.log("  - Next compound block:", theVault.getNextAutoCompoundBlock());
 
+        console.log("\nKeeper System Configuration:");
+        console.log("  - Keeper reward:", theVault.keeperReward() / 1e15, "milliETH");
+        console.log("  - Vault ETH balance:", address(theVault).balance / 1e15, "milliETH");
+        console.log("  - Deployer authorized:", theVault.authorizedKeepers(deployer));
+        console.log("  - Max keeper reward: 10.0 milliETH (hardcoded limit)");
+
         console.log("\nFarm Configuration:");
         console.log("  - Reward rate:", theFarm.REWARD_RATE(), "tokens per block");
         console.log("  - Staking token:", address(theFarm.stakingToken()));
         console.log("  - Reward token:", address(theFarm.rewardToken()));
         console.log("  - Total staked:", theFarm.totalStaked() / 1e18, "tokens");
+        console.log("  - Last reward block:", theFarm.lastRewardBlock());
     }
 }

@@ -11,25 +11,25 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
  * @title TheFarm
  * @dev MasterChef-style staking contract where users stake deposit tokens and earn rewards
  * @notice Users receive receipt tokens representing their stake and earn 10 reward tokens per block
+ *         In this implementation, rewardToken == stakingToken to support auto-compounding without swaps.
  */
 contract TheFarm is ERC20, Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
+
     /*//////////////////////////////////////////////////////////////
                                  ERRORS
     //////////////////////////////////////////////////////////////*/
-
     error TheFarm__InvalidRewardToken();
     error TheFarm__InvalidAmount();
     error TheFarm__InsufficientReceiptTokens();
     error TheFarm__InsufficientStakedAmount();
     error TheFarm__InsufficientRewardTokens();
-    error TheFarm__TransferFailed();
     error TheFarm__InvalidAddress();
 
     // Staking token (deposit token)
     IERC20 public immutable stakingToken;
 
-    // Reward token (any ERC20 token)
+    // Reward token (must equal staking token in this design)
     IERC20 public rewardToken;
 
     // Reward rate: 10 tokens per block
@@ -50,9 +50,8 @@ contract TheFarm is ERC20, Ownable, ReentrancyGuard {
     // User staking info
     struct UserInfo {
         uint256 amount; // Amount staked
-        uint256 rewardDebt; // Reward debt (for calculating pending rewards)
+        uint256 rewardDebt; // Reward debt
     }
-
     mapping(address => UserInfo) public userInfo;
 
     /*//////////////////////////////////////////////////////////////
@@ -74,6 +73,8 @@ contract TheFarm is ERC20, Ownable, ReentrancyGuard {
     {
         if (_stakingToken == address(0)) revert TheFarm__InvalidAddress();
         if (_rewardToken == address(0)) revert TheFarm__InvalidRewardToken();
+        // Enforce reward == staking token for auto-compound compatibility
+        require(_stakingToken == _rewardToken, "Farm: reward must equal staking");
 
         stakingToken = IERC20(_stakingToken);
         rewardToken = IERC20(_rewardToken);
@@ -81,28 +82,45 @@ contract TheFarm is ERC20, Ownable, ReentrancyGuard {
     }
 
     /*//////////////////////////////////////////////////////////////
-                                 FUNCTIONS
+                                 ADMIN
     //////////////////////////////////////////////////////////////*/
 
     /**
-     * @dev Update reward token (only owner)
-     * @param rewardToken_ New reward token address
+     * @dev Update reward token (must stay equal to stakingToken)
      */
     function setRewardToken(address rewardToken_) external onlyOwner {
         if (rewardToken_ == address(0)) revert TheFarm__InvalidRewardToken();
+        require(rewardToken_ == address(stakingToken), "Farm: reward must equal staking");
         address oldToken = address(rewardToken);
         rewardToken = IERC20(rewardToken_);
         emit RewardTokenUpdated(oldToken, rewardToken_);
     }
 
     /**
+     * @dev Deposit reward tokens to the contract (for distribution)
+     */
+    function depositRewards(uint256 amount) external {
+        if (amount == 0) revert TheFarm__InvalidAmount();
+        rewardToken.safeTransferFrom(msg.sender, address(this), amount);
+        emit RewardsDeposited(amount);
+    }
+
+    /**
+     * @dev Emergency function to withdraw reward tokens (only owner)
+     */
+    function emergencyWithdrawRewards(uint256 amount) external onlyOwner {
+        rewardToken.safeTransfer(owner(), amount);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                                 CORE LOGIC
+    //////////////////////////////////////////////////////////////*/
+
+    /**
      * @dev Update reward variables (MasterChef pattern)
-     * @notice This function updates the accumulated rewards per share
      */
     function updateReward() public {
-        if (block.number <= lastRewardBlock) {
-            return;
-        }
+        if (block.number <= lastRewardBlock) return;
 
         if (totalStaked == 0) {
             lastRewardBlock = block.number;
@@ -115,163 +133,110 @@ contract TheFarm is ERC20, Ownable, ReentrancyGuard {
         accRewardPerShare += (reward * PRECISION) / totalStaked;
         lastRewardBlock = block.number;
 
-        // Emit event for state change
         emit RewardsUpdated(accRewardPerShare, lastRewardBlock);
     }
 
     /**
      * @dev Stake deposit tokens and receive receipt tokens (MasterChef pattern)
-     * @param amount Amount of deposit tokens to stake
      */
     function stake(uint256 amount) external nonReentrant {
         if (amount == 0) revert TheFarm__InvalidAmount();
 
         updateReward();
-
         UserInfo storage user = userInfo[msg.sender];
 
-        // Calculate pending rewards before updating user info
+        // Pay pending rewards first
         if (user.amount > 0) {
             uint256 pending = (user.amount * accRewardPerShare) / PRECISION - user.rewardDebt;
-            if (pending > 0) {
-                // Transfer pending rewards to user
-                if (rewardToken.balanceOf(address(this)) >= pending) {
-                    rewardToken.safeTransfer(msg.sender, pending);
-                    emit RewardClaimed(msg.sender, pending);
-                }
+            if (pending > 0 && rewardToken.balanceOf(address(this)) >= pending) {
+                rewardToken.safeTransfer(msg.sender, pending);
+                emit RewardClaimed(msg.sender, pending);
             }
         }
 
-        // Transfer staking tokens from user
         stakingToken.safeTransferFrom(msg.sender, address(this), amount);
 
-        // Update user info
         user.amount += amount;
         user.rewardDebt = (user.amount * accRewardPerShare) / PRECISION;
-
-        // Update total staked
         totalStaked += amount;
 
-        // Mint receipt tokens (1:1 ratio)
+        // Mint receipt tokens (1:1)
         _mint(msg.sender, amount);
-
         emit Staked(msg.sender, amount, amount);
     }
 
     /**
-     * @dev Unstake deposit tokens by burning receipt tokens
-     * @param amount Amount of receipt tokens to burn (and deposit tokens to unstake)
+     * @dev Unstake by burning receipt tokens
      */
     function unstake(uint256 amount) external nonReentrant {
         if (amount == 0) revert TheFarm__InvalidAmount();
         if (balanceOf(msg.sender) < amount) revert TheFarm__InsufficientReceiptTokens();
 
         updateReward();
-
         UserInfo storage user = userInfo[msg.sender];
         if (user.amount < amount) revert TheFarm__InsufficientStakedAmount();
 
-        // Calculate pending rewards
+        // Pay pending rewards
         uint256 pending = (user.amount * accRewardPerShare) / PRECISION - user.rewardDebt;
-        if (pending > 0) {
-            // Transfer pending rewards to user
-            if (rewardToken.balanceOf(address(this)) >= pending) {
-                rewardToken.safeTransfer(msg.sender, pending);
-                emit RewardClaimed(msg.sender, pending);
-            }
+        if (pending > 0 && rewardToken.balanceOf(address(this)) >= pending) {
+            rewardToken.safeTransfer(msg.sender, pending);
+            emit RewardClaimed(msg.sender, pending);
         }
 
-        // Update user info
         user.amount -= amount;
         user.rewardDebt = (user.amount * accRewardPerShare) / PRECISION;
-
-        // Update total staked
         totalStaked -= amount;
 
-        // Burn receipt tokens
         _burn(msg.sender, amount);
-
-        // Transfer deposit tokens back to user
         stakingToken.safeTransfer(msg.sender, amount);
-
         emit Unstaked(msg.sender, amount, amount);
     }
 
     /**
-     * @dev Claim pending rewards (MasterChef pattern)
+     * @dev Claim pending rewards for msg.sender
      */
     function claimRewards() external nonReentrant {
         updateReward();
-
         UserInfo storage user = userInfo[msg.sender];
 
-        // Calculate pending rewards
         uint256 pending = (user.amount * accRewardPerShare) / PRECISION - user.rewardDebt;
+        if (pending == 0) return;
 
-        if (pending > 0) {
-            // Update reward debt
-            user.rewardDebt = (user.amount * accRewardPerShare) / PRECISION;
-
-            // Ensure contract has enough reward tokens
-            if (rewardToken.balanceOf(address(this)) < pending) {
-                revert TheFarm__InsufficientRewardTokens();
-            }
-
-            rewardToken.safeTransfer(msg.sender, pending);
-            emit RewardClaimed(msg.sender, pending);
+        user.rewardDebt = (user.amount * accRewardPerShare) / PRECISION;
+        if (rewardToken.balanceOf(address(this)) < pending) {
+            revert TheFarm__InsufficientRewardTokens();
         }
+        rewardToken.safeTransfer(msg.sender, pending);
+        emit RewardClaimed(msg.sender, pending);
     }
 
     /**
-     * @dev Get pending rewards for a user (MasterChef pattern)
-     * @param user User address
-     * @return Pending reward amount
+     * @dev View: pending rewards for user
      */
-    function getPendingRewards(address user) external view returns (uint256) {
-        UserInfo memory userData = userInfo[user];
+    function getPendingRewards(address userAddr) external view returns (uint256) {
+        UserInfo memory user = userInfo[userAddr];
 
-        uint256 currentAccRewardPerShare = accRewardPerShare;
+        uint256 currentAcc = accRewardPerShare;
         if (block.number > lastRewardBlock && totalStaked > 0) {
             uint256 blocksPassed = block.number - lastRewardBlock;
             uint256 reward = blocksPassed * REWARD_RATE;
-            currentAccRewardPerShare += (reward * PRECISION) / totalStaked;
+            currentAcc += (reward * PRECISION) / totalStaked;
         }
 
-        uint256 pending = (userData.amount * currentAccRewardPerShare) / PRECISION - userData.rewardDebt;
-        return pending;
+        return (user.amount * currentAcc) / PRECISION - user.rewardDebt;
     }
 
     /**
-     * @dev Deposit reward tokens to the contract (for distribution)
-     * @param amount Amount of reward tokens to deposit
-     */
-    function depositRewards(uint256 amount) external {
-        if (amount == 0) revert TheFarm__InvalidAmount();
-        rewardToken.safeTransferFrom(msg.sender, address(this), amount);
-        emit RewardsDeposited(amount);
-    }
-
-    /**
-     * @dev Emergency function to withdraw reward tokens (only owner)
-     * @param amount Amount of reward tokens to withdraw
-     */
-    function emergencyWithdrawRewards(uint256 amount) external onlyOwner {
-        rewardToken.safeTransfer(owner(), amount);
-    }
-
-    /**
-     * @dev Get contract's balance of reward tokens
-     * @return Balance of reward tokens
-     */
-    function getRewardTokenBalance() external view returns (uint256) {
-        return rewardToken.balanceOf(address(this));
-    }
-
-    /**
-     * @dev Get contract's balance of staking tokens
-     * @return Balance of staking tokens
+     * @dev Convenience: underlying staking token balance held by the farm
      */
     function getStakingTokenBalance() external view returns (uint256) {
         return stakingToken.balanceOf(address(this));
+    }
+
+    /**
+     * @dev Convenience: reward token balance held by the farm
+     */
+    function getRewardTokenBalance() external view returns (uint256) {
+        return rewardToken.balanceOf(address(this));
     }
 }

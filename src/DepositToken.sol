@@ -33,8 +33,6 @@ contract DepositToken is ERC20, Ownable {
 
     /**
      * @dev Authorize or revoke minting privileges for an address
-     * @param minter Address to authorize/revoke
-     * @param authorized True to authorize, false to revoke
      */
     function setAuthorizedMinter(address minter, bool authorized) external onlyOwner {
         if (minter == address(0)) revert DepositToken__InvalidAddress();
@@ -44,8 +42,6 @@ contract DepositToken is ERC20, Ownable {
 
     /**
      * @dev Mint tokens to a specific address
-     * @param to Address to mint tokens to
-     * @param amount Amount of tokens to mint
      */
     function mint(address to, uint256 amount) external {
         if (!authorizedMinters[msg.sender]) revert DepositToken__NotAuthorizedToMint();
@@ -56,8 +52,6 @@ contract DepositToken is ERC20, Ownable {
 
     /**
      * @dev Burn tokens from a specific address
-     * @param from Address to burn tokens from
-     * @param amount Amount of tokens to burn
      */
     function burn(address from, uint256 amount) external {
         if (!authorizedMinters[msg.sender]) revert DepositToken__NotAuthorizedToBurn();
@@ -68,7 +62,6 @@ contract DepositToken is ERC20, Ownable {
 
     /**
      * @dev Burn tokens from caller's balance
-     * @param amount Amount of tokens to burn
      */
     function burnFromSelf(uint256 amount) external {
         if (amount == 0) revert DepositToken__InvalidAmount();

@@ -291,7 +291,7 @@ contract TheFarmTest is Test {
     }
 
     function testSetRewardToken() public {
-        address newRewardToken = address(0x123);
+        address newRewardToken = address(depositToken); // Must equal staking token
 
         vm.startPrank(owner);
         vm.expectEmit(true, true, true, true);
@@ -560,7 +560,7 @@ contract TheFarmTest is Test {
     }
 
     function testSetRewardTokenEvent() public {
-        address newRewardToken = address(0x999);
+        address newRewardToken = address(depositToken); // Must equal staking token
 
         vm.startPrank(owner);
         vm.expectEmit(true, true, true, true);

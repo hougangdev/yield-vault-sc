@@ -35,8 +35,8 @@ contract DeployAll is Script {
 
     // Auto-compounding parameters
     bool constant DEFAULT_AUTO_COMPOUND_ENABLED = true;
-    uint256 constant DEFAULT_AUTO_COMPOUND_INTERVAL = 100; // 100 blocks (~20 minutes)
-    uint256 constant DEFAULT_MIN_COMPOUND_AMOUNT = 10 * 1e18; // 10 tokens
+    uint256 constant DEFAULT_AUTO_COMPOUND_INTERVAL = 5; // 5 blocks (~1 minute for demo)
+    uint256 constant DEFAULT_MIN_COMPOUND_AMOUNT = 1 * 1e18; // 1 token for demo
     uint256 constant DEFAULT_MAX_GAS_PRICE = 50 * 1e9; // 50 gwei
 
     // Keeper parameters

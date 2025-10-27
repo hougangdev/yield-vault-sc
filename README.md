@@ -6,11 +6,13 @@ A decentralized yield farming application built with Solidity smart contracts an
 
 ### Smart Contract Features
 
-- **Farm Rewards**: 10 reward tokens per block
-- **Receipt Token System**: Users receive receipt tokens representing their stake
-- **Automated Vault Management**: Collects and restakes rewards for compound growth
-- **Flexible Token Support**: Any ERC20 token can be used as reward token
-- **Reward Distribution**: Proportional reward distribution based on stake amount
+- **Farm Rewards**: 10 reward tokens per block distributed to stakers
+- **Receipt Token System**: Users receive receipt tokens (1:1) representing their stake
+- **ERC4626 Vault**: Standard vault interface for deposit/withdraw operations
+- **Auto-Compounding**: Automated reward collection and restaking for compound growth
+- **Performance Fees**: Configurable fee on harvested rewards (max 10%)
+- **Keeper System**: Authorized keepers can trigger compounds and earn rewards
+- **Gas Optimization**: Configurable gas price limits and minimum compound amounts
 
 ### Core Components
 
@@ -162,31 +164,77 @@ cast call <vault_address> "totalAssets()" --rpc-url <rpc_url>
 
 ### TheFarm Functions
 
-- `stake(uint256 amount)` - Stake deposit tokens, receive receipt tokens
+**User Functions:**
+
+- `stake(uint256 amount)` - Stake deposit tokens, receive receipt tokens (1:1 ratio)
 - `unstake(uint256 amount)` - Burn receipt tokens, receive deposit tokens back
 - `claimRewards()` - Claim accumulated rewards
+
+**Admin Functions (Owner Only):**
+
+- `setRewardToken(address _rewardToken)` - Update reward token address
+- `depositRewards(uint256 amount)` - Deposit reward tokens to contract
+- `emergencyWithdrawRewards(uint256 amount)` - Emergency withdraw reward tokens
+
+**View Functions:**
+
 - `getPendingRewards(address user)` - View pending rewards for a user
-- `setRewardToken(address _rewardToken)` - Update reward token (owner only)
+- `getStakingTokenBalance()` - Get contract's staking token balance
+- `getRewardTokenBalance()` - Get contract's reward token balance
+- `updateReward()` - Update accumulated rewards per share
 
 ### TheVault Functions (ERC4626)
 
+**User Functions:**
+
 - `deposit(uint256 assets, address receiver)` - Deposit assets and receive vault shares
 - `redeem(uint256 shares, address receiver, address owner)` - Redeem vault shares for assets
-- `collectUserRewards(address user)` - Collect rewards for a specific user
-- `collectMultipleUserRewards(address[] users)` - Collect rewards for multiple users
-- `restakeRewards(uint256 amount)` - Manually restake collected rewards
-- `totalAssets()` - Get total assets managed by the vault
+- `executeAutoCompound()` - Execute auto-compounding (anyone can call)
+- `emergencyAutoCompound()` - Execute auto-compound with relaxed checks (authorized keepers)
+
+**Admin Functions (Owner Only):**
+
+- `setPerformanceFee(uint256 fee_)` - Set performance fee in BPS (max 10%)
+- `setFeeRecipient(address recipient_)` - Set fee recipient address
+- `setAutoCompoundEnabled(bool enabled)` - Enable/disable auto-compounding
+- `setAutoCompoundInterval(uint256 interval_)` - Set blocks between compounds
+- `setMinCompoundAmount(uint256 amount_)` - Set minimum amount to compound
+- `setMaxGasPrice(uint256 gasPrice_)` - Set maximum gas price for compounds
+- `setKeeperAuthorization(address keeper, bool authorized)` - Authorize/revoke keepers
+- `setKeeperReward(uint256 reward_)` - Set keeper reward amount
+- `withdrawETH(uint256 amount)` - Withdraw contract ETH
+- `emergencyWithdraw(address token, uint256 amount)` - Emergency withdraw any token
+- `depositETH()` - Receive ETH deposits (payable)
+
+**View Functions:**
+
+- `totalAssets()` - Get total assets managed by vault (ERC4626 standard)
+- `shouldExecuteAutoCompound()` - Check if auto-compound should execute
+- `getAutoCompoundStatus()` - Get auto-compound configuration and status
+- `getNextAutoCompoundBlock()` - Get block when next compound can execute
+- `getTotalRewardsCollected()` - Get total rewards collected by vault
+- `getRewardTokenBalance()` - Get vault's reward token balance
+- `getStakingTokenBalance()` - Get vault's staking token balance
+- `getPendingRewardsInFarm()` - Get pending rewards in TheFarm
+
+**ERC4626 Standard Functions:**
+
 - `convertToShares(uint256 assets)` - Convert assets to shares
 - `convertToAssets(uint256 shares)` - Convert shares to assets
-- `previewDeposit(uint256 assets)` - Preview deposit operation
-- `previewRedeem(uint256 shares)` - Preview redeem operation
-- `setAutoRestakeThreshold(uint256 _threshold)` - Update auto-restake threshold (owner only)
+- `previewDeposit(uint256 assets)` - Preview shares from deposit
+- `previewRedeem(uint256 shares)` - Preview assets from redemption
 
 ### DepositToken Functions
 
-- `mint(address to, uint256 amount)` - Mint tokens (authorized contracts only)
-- `burn(address from, uint256 amount)` - Burn tokens (authorized contracts only)
-- `setAuthorizedMinter(address minter, bool authorized)` - Manage authorized minters (owner only)
+**Authorized Minter Functions:**
+
+- `mint(address to, uint256 amount)` - Mint tokens to address
+- `burn(address from, uint256 amount)` - Burn tokens from address
+
+**Admin Functions (Owner Only):**
+
+- `setAuthorizedMinter(address minter, bool authorized)` - Authorize/revoke minter
+- `burnFromSelf(uint256 amount)` - Burn own tokens (for staking)
 
 ## 📊 Testing
 
@@ -205,8 +253,27 @@ forge test -vvv
 
 ## 💡 Usage Flow
 
-1. **Initial Setup**: Deploy all contracts and authorize TheFarm to mint/burn DepositTokens
-2. **User Staking**: Users approve and stake DepositTokens to receive receipt tokens
-3. **Reward Accumulation**: Rewards accumulate at 10 tokens per block
-4. **Vault Management**: TheVault collects rewards and restakes for compound growth
-5. **Withdrawal**: Users unstake by burning receipt tokens to receive DepositTokens back
+### For Users
+
+1. **Deposit**: Deposit DepositTokens into TheVault using `deposit()` - receive vault shares
+2. **Auto-Compounding**: Rewards automatically compound when conditions are met
+3. **Monitor**: Track your vault share growth as rewards compound
+4. **Withdraw**: Redeem vault shares using `redeem()` to receive DepositTokens back
+
+### For TheVault Contract
+
+1. **Initial Setup**: Deploy contracts and authorize TheFarm to mint/burn DepositTokens
+2. **Auto-Compound Triggers**: Anyone can call `executeAutoCompound()` when conditions are met
+3. **Reward Collection**: Vault harvests rewards from TheFarm
+4. **Fee Distribution**: Performance fee sent to fee recipient
+5. **Reinvestment**: Remaining rewards restaked to grow vault share price
+
+### Auto-Compounding Conditions
+
+Auto-compounding executes when:
+
+- Auto-compound is enabled
+- Block interval has passed (default: 100 blocks)
+- Minimum amount threshold reached (default: 10 tokens)
+- Gas price is below maximum (default: 50 gwei)
+- Keeper has sufficient ETH balance for gas (if calling `emergencyAutoCompound()`)

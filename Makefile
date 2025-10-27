@@ -24,3 +24,5 @@ fmt :; forge fmt
 deploy-all:; forge script script/DeployAll.s.sol:DeployAll --rpc-url $(SEPOLIA_RPC_URL) --private-key $(PRIVATE_KEY) --broadcast --verify --etherscan-api-key $(ETHERSCAN_API_KEY) -vvvv
 
 fund-farm:; forge script script/FundFarm.s.sol:FundFarm --rpc-url $(SEPOLIA_RPC_URL) --private-key $(PRIVATE_KEY) --broadcast -vvvv
+
+send-yvdt-and-authorize:; forge script script/SendYvdtAndAuthorize.s.sol:SendYvdtAndAuthorize --rpc-url $(SEPOLIA_RPC_URL) --private-key $(PRIVATE_KEY) --broadcast -vvvv

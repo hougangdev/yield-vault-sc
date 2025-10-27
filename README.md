@@ -30,6 +30,7 @@ The yield vault system consists of three integrated contracts:
    - Authorized minting/burning for staking contracts
    - Owner-controlled access management
    - Initial supply distribution
+   - **Deployed Address (Sepolia)**: `0x735de2703e15e7b33Be509512e2bbEB444674430`
 
 2. **TheFarm.sol** - Main staking contract
 
@@ -38,6 +39,7 @@ The yield vault system consists of three integrated contracts:
    - Receipt tokens represent user's stake and are burned on withdrawal
    - Automatic reward calculation based on blocks
    - Reward claiming functionality
+   - **Deployed Address (Sepolia)**: `0x383a9c0910b9329Bf041ccDeBe26A5b3DDca9CCF`
 
 3. **TheVault.sol** - ERC4626 compliant vault management
 
@@ -46,6 +48,7 @@ The yield vault system consists of three integrated contracts:
    - Automatic restaking when threshold is met
    - Emergency withdrawal functions
    - ERC4626 standard compliance for vault operations
+   - **Deployed Address (Sepolia)**: `0x68f3522b3d953a146b879e42d8ddC06Ba5A300b4`
 
 ## 🛠️ Development
 
@@ -104,11 +107,28 @@ anvil
 
 ### Deployment
 
-#### Deploy All Contracts
+#### Deploy All Contracts to Sepolia
 
 ```bash
-forge script script/DeployAll.s.sol --rpc-url <RPC_URL> --broadcast --verify
+make deploy-all
 ```
+
+#### Fund Farm with Rewards
+
+```bash
+make fund-farm
+```
+
+#### Send YVDT Tokens and Authorize Auto-Compounding
+
+```bash
+make send-yvdt-and-authorize
+```
+
+This will:
+
+- Send 1000 YVDT tokens to address `0x34846BF00C64A56A5FB10a9EE7717aBC7887FEdf`
+- Authorize the address as a keeper for auto-compounding
 
 #### Individual Contract Deployment
 
